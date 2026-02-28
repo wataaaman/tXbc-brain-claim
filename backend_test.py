@@ -520,6 +520,27 @@ def main():
     if not tester.test_settings():
         print("⚠️ Settings failed")
 
+    # === NEW FEATURES TESTING ===
+    print("\n🚀 Testing New Features:")
+    
+    # Test comprehensive timeline (requires claim_id)
+    if claim_id:
+        if not tester.test_comprehensive_timeline(claim_id):
+            print("⚠️ Comprehensive timeline failed")
+    
+    # Test PDF generation
+    if not tester.test_pdf_generation():
+        print("⚠️ PDF generation failed")
+    
+    # Test Pinata IPFS upload (may fail with invalid key but should attempt)
+    if claim_id:
+        if not tester.test_pinata_ipfs_upload(claim_id):
+            print("⚠️ Pinata IPFS upload failed (expected if API key is invalid)")
+    
+    # Test AI draft letter
+    if not tester.test_ai_draft_letter(claim_id):
+        print("⚠️ AI draft letter failed")
+
     # Print final results
     print("\n" + "=" * 60)
     print(f"📊 Test Results: {tester.tests_passed}/{tester.tests_run} passed")

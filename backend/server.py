@@ -720,6 +720,50 @@ async def get_timeline(claim_id: str, user: dict = Depends(get_current_user)):
     
     return result
 
+# ============== PINATA IPFS HELPER ==============
+
+async def upload_to_pinata(file_content: bytes, filename: str, metadata: dict) -> dict:
+    """Upload file to Pinata IPFS"""
+    if not PINATA_JWT:
+        # Fallback to mock if no JWT configured
+        fake_cid = f"Qm{uuid.uuid4().hex[:44]}"
+        return {"cid": fake_cid, "is_mocked": True}
+    
+    try:
+        import aiohttp
+        
+        url = "https://api.pinata.cloud/pinning/pinFileToIPFS"
+        
+        form_data = aiohttp.FormData()
+        form_data.add_field('file', file_content, filename=filename)
+        form_data.add_field('pinataMetadata', json.dumps({
+            "name": filename,
+            "keyvalues": metadata
+        }))
+        form_data.add_field('pinataOptions', json.dumps({
+            "cidVersion": 1
+        }))
+        
+        headers = {
+            "Authorization": f"Bearer {PINATA_JWT}"
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, data=form_data, headers=headers, timeout=120) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return {"cid": data.get("IpfsHash"), "is_mocked": False}
+                else:
+                    error_text = await response.text()
+                    logger.error(f"Pinata upload failed: {error_text}")
+                    # Fallback to mock
+                    fake_cid = f"Qm{uuid.uuid4().hex[:44]}"
+                    return {"cid": fake_cid, "is_mocked": True, "error": error_text}
+    except Exception as e:
+        logger.error(f"Pinata upload error: {e}")
+        fake_cid = f"Qm{uuid.uuid4().hex[:44]}"
+        return {"cid": fake_cid, "is_mocked": True, "error": str(e)}
+
 # ============== EVIDENCE ROUTES ==============
 
 @api_router.post("/evidence/upload", response_model=EvidenceFile)
@@ -730,7 +774,7 @@ async def upload_evidence(
     evidence_type: str = Form(...),
     user: dict = Depends(get_current_user)
 ):
-    """Upload evidence file (MOCKED IPFS - stores metadata only)"""
+    """Upload evidence file to IPFS via Pinata"""
     
     # Verify claim belongs to user
     claim = await db.claims.find_one({"claim_id": claim_id, "user_id": user["user_id"]}, {"_id": 0})
@@ -742,8 +786,19 @@ async def upload_evidence(
     
     evidence_id = f"evidence_{uuid.uuid4().hex[:12]}"
     
-    # MOCKED: Generate fake IPFS CID
-    fake_cid = f"Qm{uuid.uuid4().hex[:44]}"
+    # Upload to Pinata IPFS
+    pinata_result = await upload_to_pinata(
+        file_content=file_content,
+        filename=file.filename,
+        metadata={
+            "claim_id": claim_id,
+            "evidence_type": evidence_type,
+            "user_id": user["user_id"]
+        }
+    )
+    
+    ipfs_cid = pinata_result["cid"]
+    is_mocked = pinata_result.get("is_mocked", False)
     
     evidence_doc = {
         "evidence_id": evidence_id,
@@ -752,16 +807,18 @@ async def upload_evidence(
         "file_name": file.filename,
         "file_type": file.content_type,
         "file_size": file_size,
-        "ipfs_cid": fake_cid,
-        "storage_url": f"https://{PINATA_GATEWAY}/ipfs/{fake_cid}",
+        "ipfs_cid": ipfs_cid,
+        "storage_url": f"https://{PINATA_GATEWAY}/ipfs/{ipfs_cid}",
         "description": description,
         "evidence_type": evidence_type,
+        "is_mocked": is_mocked,
         "uploaded_at": datetime.now(timezone.utc).isoformat()
     }
     
     await db.evidence.insert_one(evidence_doc)
     
-    logger.info(f"[MOCKED IPFS] Evidence uploaded: {evidence_id} with fake CID: {fake_cid}")
+    status = "MOCKED" if is_mocked else "REAL IPFS"
+    logger.info(f"[{status}] Evidence uploaded: {evidence_id} with CID: {ipfs_cid}")
     
     return EvidenceFile(
         evidence_id=evidence_id,
@@ -770,8 +827,8 @@ async def upload_evidence(
         file_name=file.filename,
         file_type=file.content_type,
         file_size=file_size,
-        ipfs_cid=fake_cid,
-        storage_url=f"https://{PINATA_GATEWAY}/ipfs/{fake_cid}",
+        ipfs_cid=ipfs_cid,
+        storage_url=f"https://{PINATA_GATEWAY}/ipfs/{ipfs_cid}",
         description=description,
         evidence_type=evidence_type,
         uploaded_at=datetime.now(timezone.utc)

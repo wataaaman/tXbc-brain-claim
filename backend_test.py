@@ -274,6 +274,198 @@ class WCBBackendTester:
         
         return success1 and success2
 
+    def test_comprehensive_timeline(self, claim_id):
+        """Test comprehensive timeline endpoint"""
+        if not self.token or not claim_id:
+            print("❌ No token or claim_id available for timeline test")
+            return False
+            
+        success, response = self.run_test(
+            "Get Comprehensive Timeline",
+            "GET",
+            f"api/claims/{claim_id}/full-timeline",
+            200
+        )
+        
+        # Validate response structure
+        if success and isinstance(response, dict):
+            required_keys = ['claim', 'timeline', 'stats']
+            missing_keys = [key for key in required_keys if key not in response]
+            if missing_keys:
+                print(f"⚠️ Missing timeline response keys: {missing_keys}")
+                return False
+            print(f"✅ Timeline response has {len(response.get('timeline', []))} events")
+            
+        return success
+
+    def test_pdf_generation(self):
+        """Test PDF generation endpoint"""
+        if not self.token:
+            print("❌ No token available for PDF test")
+            return False
+            
+        # First create a letter to generate PDF from
+        letter_data = {
+            "template_type": "claim_file_request",
+            "claim_id": None,
+            "custom_data": {}
+        }
+        
+        success, response = self.run_test(
+            "Generate Letter for PDF",
+            "POST",
+            "api/letters/generate",
+            200,
+            data=letter_data
+        )
+        
+        if not success or not isinstance(response, dict) or 'letter_id' not in response:
+            print("❌ Failed to create letter for PDF test")
+            return False
+            
+        letter_id = response['letter_id']
+        
+        # Now test PDF generation
+        url = f"{self.base_url}/api/letters/{letter_id}/pdf"
+        headers = {'Authorization': f'Bearer {self.token}'}
+        
+        print(f"\n🔍 Testing PDF Generation...")
+        print(f"   URL: {url}")
+        
+        try:
+            response = requests.post(url, headers=headers)
+            success = response.status_code == 200
+            
+            if success:
+                # Check if response is PDF
+                content_type = response.headers.get('content-type', '')
+                if 'application/pdf' in content_type:
+                    print(f"✅ Passed - PDF generated successfully (Size: {len(response.content)} bytes)")
+                    self.tests_passed += 1
+                else:
+                    print(f"❌ Failed - Wrong content type: {content_type}")
+                    success = False
+            else:
+                print(f"❌ Failed - Status: {response.status_code}")
+                try:
+                    error = response.json()
+                    print(f"   Error: {error}")
+                except:
+                    print(f"   Response: {response.text[:200]}...")
+            
+            self.tests_run += 1
+            return success
+            
+        except Exception as e:
+            print(f"❌ Failed - Error: {str(e)}")
+            self.tests_run += 1
+            return False
+
+    def test_pinata_ipfs_upload(self, claim_id):
+        """Test Pinata IPFS evidence upload"""
+        if not self.token or not claim_id:
+            print("❌ No token or claim_id available for IPFS test")
+            return False
+            
+        # Create a small test file
+        import io
+        test_file_content = b"Test evidence file content for IPFS upload"
+        
+        url = f"{self.base_url}/api/evidence/upload"
+        headers = {'Authorization': f'Bearer {self.token}'}
+        
+        files = {
+            'file': ('test_evidence.txt', io.BytesIO(test_file_content), 'text/plain')
+        }
+        
+        data = {
+            'claim_id': claim_id,
+            'description': 'Test evidence upload for IPFS',
+            'evidence_type': 'document'
+        }
+        
+        print(f"\n🔍 Testing Pinata IPFS Upload...")
+        print(f"   URL: {url}")
+        
+        try:
+            response = requests.post(url, headers=headers, files=files, data=data)
+            success = response.status_code == 200
+            
+            if success:
+                result = response.json()
+                if 'ipfs_cid' in result:
+                    ipfs_cid = result['ipfs_cid']
+                    is_mocked = result.get('is_mocked', False)
+                    status = "MOCKED" if is_mocked else "REAL IPFS"
+                    print(f"✅ Passed - {status} upload successful (CID: {ipfs_cid[:20]}...)")
+                    self.tests_passed += 1
+                else:
+                    print(f"❌ Failed - No IPFS CID in response")
+                    success = False
+            else:
+                print(f"❌ Failed - Status: {response.status_code}")
+                try:
+                    error = response.json()
+                    print(f"   Error: {error}")
+                except:
+                    print(f"   Response: {response.text[:200]}...")
+            
+            self.tests_run += 1
+            return success
+            
+        except Exception as e:
+            print(f"❌ Failed - Error: {str(e)}")
+            self.tests_run += 1
+            return False
+
+    def test_ai_draft_letter(self, claim_id=None):
+        """Test AI letter drafting endpoint"""
+        if not self.token:
+            print("❌ No token available for AI draft test")
+            return False
+            
+        url = f"{self.base_url}/api/letters/ai-draft"
+        headers = {'Authorization': f'Bearer {self.token}'}
+        
+        form_data = {
+            'purpose': 'I need to request my complete claim file because I believe there are missing medical records from my recent specialist visits.',
+            'additional_context': 'I have been waiting for 3 weeks without response to my previous inquiry.'
+        }
+        
+        if claim_id:
+            form_data['claim_id'] = claim_id
+        
+        print(f"\n🔍 Testing AI Draft Letter...")
+        print(f"   URL: {url}")
+        
+        try:
+            response = requests.post(url, headers=headers, data=form_data)
+            success = response.status_code == 200
+            
+            if success:
+                result = response.json()
+                if 'content' in result and len(result['content']) > 100:
+                    print(f"✅ Passed - AI letter generated ({len(result['content'])} characters)")
+                    self.tests_passed += 1
+                else:
+                    print(f"❌ Failed - Invalid AI response content")
+                    success = False
+            else:
+                print(f"❌ Failed - Status: {response.status_code}")
+                try:
+                    error = response.json()
+                    print(f"   Error: {error}")
+                except:
+                    print(f"   Response: {response.text[:200]}...")
+            
+            self.tests_run += 1
+            return success
+            
+        except Exception as e:
+            print(f"❌ Failed - Error: {str(e)}")
+            self.tests_run += 1
+            return False
+
 def main():
     # Setup
     tester = WCBBackendTester()

@@ -227,9 +227,9 @@ class WCBBackendTester:
         success1, response1 = self.run_test(
             "Send OTP",
             "POST",
-            "api/auth/otp/send",
+            f"api/auth/otp/send?email={test_email}",
             200,
-            data=test_email
+            data={}
         )
         
         # Note: In real implementation, we'd need the actual OTP from server logs

@@ -8,7 +8,7 @@ Build an app for injured workers to support their needs related to Alberta Worke
 - **Backend**: FastAPI (Python) with async MongoDB (motor)
 - **Database**: MongoDB
 - **AI**: OpenAI GPT-5.2 via Emergent LLM integration
-- **Storage**: IPFS via Pinata (MOCKED for MVP)
+- **Storage**: IPFS via Pinata (REAL - working with provided key)
 - **Auth**: JWT + Google OAuth (Emergent Auth) + Email OTP + TOTP
 
 ## User Personas
@@ -33,21 +33,30 @@ Build an app for injured workers to support their needs related to Alberta Worke
 - [x] TOTP 2FA setup/verify
 - [x] Claims CRUD operations
 - [x] Timeline events for claims
-- [x] Evidence upload (IPFS mocked)
+- [x] Evidence upload with REAL Pinata IPFS
 - [x] AI chat with GPT-5.2
 - [x] Letter generation (templates + AI)
+- [x] PDF generation for letters (reportlab)
+- [x] Comprehensive claim timeline API
 - [x] Policy library with search
 - [x] User settings persistence
 
 ### Frontend Pages
-- [x] Landing page with TBI info
+- [x] Landing page with TBI info + VideoAsk widget
 - [x] Login/Register with multi-auth options
 - [x] Dashboard with claim management
 - [x] Policy Library with search
-- [x] Document Generator (templates + AI)
-- [x] Evidence Manager
+- [x] Document Generator (templates + AI + PDF export)
+- [x] Evidence Manager with IPFS
 - [x] AI Assistant chatbot
+- [x] Claim Timeline visualization
 - [x] Settings (theme, accent colors)
+
+### Integrations
+- [x] OpenEvidence medical platform link
+- [x] VideoAsk widget for video help
+- [x] Pinata IPFS for decentralized storage
+- [x] OpenAI GPT-5.2 for AI features
 
 ### Design System
 - [x] Warm Stone color palette
@@ -58,31 +67,27 @@ Build an app for injured workers to support their needs related to Alberta Worke
 - [x] Rounded corners (rounded-xl)
 
 ## Mocked Features
-- **IPFS Storage**: Generates fake CIDs, metadata stored in MongoDB
 - **Email OTP**: Logs OTP to server console instead of sending email
 
 ## Prioritized Backlog
 
 ### P0 - Critical (Next Sprint)
-- [ ] Real Pinata IPFS integration (user provides API key)
+- [ ] Embed actual VideoAsk form (user provides VideoAsk form ID)
 - [ ] Real email service for OTP (SendGrid/Resend)
-- [ ] VideoAsk widget embed for welcome video
 
 ### P1 - Important
-- [ ] Claim timeline visualization
-- [ ] Evidence file preview
-- [ ] Letter export to PDF
-- [ ] OpenEvidence integration for medical research
+- [ ] Evidence file preview in browser
+- [ ] Claim status updates via email notifications
+- [ ] Export all claim data as bundle
 
 ### P2 - Nice to Have
 - [ ] Biometric auth (WebAuthn)
-- [ ] Decentralized storage on blockchain
+- [ ] Blockchain storage for tamper-proof records
 - [ ] Multi-language support
 - [ ] Mobile app (React Native)
 
 ## Next Tasks
-1. Add real Pinata integration when user provides API key
-2. Implement VideoAsk embed widget
-3. Add claim timeline visualization component
-4. Integrate OpenEvidence medical platform link
-5. Add PDF export for generated letters
+1. Embed actual VideoAsk form when user provides form ID
+2. Add real email sending service for OTP
+3. Add evidence file preview functionality
+4. Implement email notifications for claim status changes

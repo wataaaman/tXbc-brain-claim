@@ -271,14 +271,26 @@ export default function Landing() {
             <p className="text-sm text-muted-foreground">
               Supporting injured workers with traumatic brain injuries in Alberta.
             </p>
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-6">
               <a 
                 href="https://www.openevidence.com/" 
                 target="_blank" 
                 rel="noopener noreferrer"
-                className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                data-testid="openevidence-link"
               >
+                <Brain className="w-4 h-4" />
                 OpenEvidence
+              </a>
+              <a 
+                href="https://www.videoask.com/" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                data-testid="videoask-link"
+              >
+                <MessageSquare className="w-4 h-4" />
+                VideoAsk
               </a>
             </div>
           </div>

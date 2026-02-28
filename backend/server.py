@@ -1165,6 +1165,197 @@ async def get_letters(user: dict = Depends(get_current_user)):
     
     return result
 
+# ============== PDF GENERATION ==============
+
+@api_router.post("/letters/{letter_id}/pdf")
+async def generate_letter_pdf(letter_id: str, user: dict = Depends(get_current_user)):
+    """Generate PDF from letter content"""
+    from reportlab.lib.pagesizes import letter as PAGE_LETTER
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+    from reportlab.lib.units import inch
+    from io import BytesIO
+    
+    # Get letter
+    letter_doc = await db.letters.find_one({"letter_id": letter_id, "user_id": user["user_id"]}, {"_id": 0})
+    if not letter_doc:
+        raise HTTPException(status_code=404, detail="Letter not found")
+    
+    # Create PDF in memory
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=PAGE_LETTER, 
+                            rightMargin=inch, leftMargin=inch,
+                            topMargin=inch, bottomMargin=inch)
+    
+    styles = getSampleStyleSheet()
+    
+    # Custom styles
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=14,
+        spaceAfter=12
+    )
+    
+    body_style = ParagraphStyle(
+        'CustomBody',
+        parent=styles['Normal'],
+        fontSize=11,
+        leading=14,
+        spaceAfter=10
+    )
+    
+    # Build PDF content
+    story = []
+    
+    # Add NeuroClaim header
+    story.append(Paragraph("NeuroClaim Support - WCB Letter", title_style))
+    story.append(Spacer(1, 0.25*inch))
+    
+    # Split content into paragraphs
+    content = letter_doc.get("content", "")
+    paragraphs = content.split('\n\n')
+    
+    for para in paragraphs:
+        if para.strip():
+            # Handle line breaks within paragraphs
+            clean_para = para.replace('\n', '<br/>')
+            story.append(Paragraph(clean_para, body_style))
+    
+    # Build PDF
+    doc.build(story)
+    
+    # Get PDF bytes
+    pdf_bytes = buffer.getvalue()
+    buffer.close()
+    
+    # Return PDF as response
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="wcb-letter-{letter_id}.pdf"'
+        }
+    )
+
+# ============== COMPREHENSIVE TIMELINE ==============
+
+@api_router.get("/claims/{claim_id}/full-timeline")
+async def get_full_claim_timeline(claim_id: str, user: dict = Depends(get_current_user)):
+    """Get comprehensive timeline including events, letters, and evidence"""
+    
+    # Verify claim belongs to user
+    claim = await db.claims.find_one({"claim_id": claim_id, "user_id": user["user_id"]}, {"_id": 0})
+    if not claim:
+        raise HTTPException(status_code=404, detail="Claim not found")
+    
+    timeline_items = []
+    
+    # Add claim creation event
+    created_at = claim.get("created_at")
+    if isinstance(created_at, str):
+        created_at = datetime.fromisoformat(created_at)
+    
+    timeline_items.append({
+        "id": f"claim_created_{claim_id}",
+        "type": "claim_created",
+        "title": "Claim Created",
+        "description": f"WCB claim {claim['claim_number']} registered - {claim['injury_group']}",
+        "date": created_at.isoformat() if created_at else datetime.now(timezone.utc).isoformat(),
+        "icon": "file-plus",
+        "color": "blue"
+    })
+    
+    # Add injury date event
+    injury_date = claim.get("injury_date")
+    if injury_date:
+        try:
+            injury_dt = datetime.fromisoformat(injury_date) if 'T' in injury_date else datetime.strptime(injury_date, "%Y-%m-%d")
+            timeline_items.append({
+                "id": f"injury_{claim_id}",
+                "type": "injury",
+                "title": "Date of Injury",
+                "description": f"{claim['injury_type']} - {claim['injury_group']}",
+                "date": injury_dt.isoformat(),
+                "icon": "alert-triangle",
+                "color": "red"
+            })
+        except:
+            pass
+    
+    # Add timeline events
+    events = await db.timeline_events.find({"claim_id": claim_id}, {"_id": 0}).to_list(500)
+    for event in events:
+        event_date = event.get("date")
+        if isinstance(event_date, str):
+            event_date = datetime.fromisoformat(event_date)
+        
+        timeline_items.append({
+            "id": event["event_id"],
+            "type": f"event_{event['event_type']}",
+            "title": event["title"],
+            "description": event["description"],
+            "date": event_date.isoformat() if event_date else datetime.now(timezone.utc).isoformat(),
+            "icon": "calendar",
+            "color": "purple"
+        })
+    
+    # Add letters
+    letters = await db.letters.find({"claim_id": claim_id}, {"_id": 0}).to_list(500)
+    for letter in letters:
+        generated_at = letter.get("generated_at")
+        if isinstance(generated_at, str):
+            generated_at = datetime.fromisoformat(generated_at)
+        
+        template_name = letter.get("template_type", "custom").replace("_", " ").title()
+        timeline_items.append({
+            "id": letter["letter_id"],
+            "type": "letter",
+            "title": f"Letter Generated: {template_name}",
+            "description": f"WCB correspondence created",
+            "date": generated_at.isoformat() if generated_at else datetime.now(timezone.utc).isoformat(),
+            "icon": "file-text",
+            "color": "green",
+            "letter_id": letter["letter_id"]
+        })
+    
+    # Add evidence uploads
+    evidence_list = await db.evidence.find({"claim_id": claim_id}, {"_id": 0}).to_list(500)
+    for evidence in evidence_list:
+        uploaded_at = evidence.get("uploaded_at")
+        if isinstance(uploaded_at, str):
+            uploaded_at = datetime.fromisoformat(uploaded_at)
+        
+        timeline_items.append({
+            "id": evidence["evidence_id"],
+            "type": "evidence",
+            "title": f"Evidence Uploaded: {evidence['file_name']}",
+            "description": evidence.get("description", ""),
+            "date": uploaded_at.isoformat() if uploaded_at else datetime.now(timezone.utc).isoformat(),
+            "icon": "upload",
+            "color": "orange",
+            "evidence_id": evidence["evidence_id"],
+            "ipfs_cid": evidence.get("ipfs_cid")
+        })
+    
+    # Sort by date (newest first)
+    timeline_items.sort(key=lambda x: x["date"], reverse=True)
+    
+    return {
+        "claim": {
+            "claim_id": claim["claim_id"],
+            "claim_number": claim["claim_number"],
+            "injury_group": claim["injury_group"],
+            "status": claim["status"]
+        },
+        "timeline": timeline_items,
+        "stats": {
+            "total_events": len([i for i in timeline_items if i["type"].startswith("event_")]),
+            "total_letters": len([i for i in timeline_items if i["type"] == "letter"]),
+            "total_evidence": len([i for i in timeline_items if i["type"] == "evidence"])
+        }
+    }
+
 # ============== POLICY ROUTES ==============
 
 # Pre-populated WCB policies

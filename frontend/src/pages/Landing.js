@@ -285,13 +285,23 @@ export default function Landing() {
         </div>
       </footer>
 
-      {/* VideoAsk Widget Placeholder */}
+      {/* VideoAsk Widget */}
       {showVideoAsk && (
-        <div className="fixed bottom-6 right-6 z-50">
-          <div className="w-16 h-16 rounded-full bg-primary shadow-lg flex items-center justify-center cursor-pointer hover:scale-105 transition-transform" data-testid="videoask-widget">
-            <MessageSquare className="w-7 h-7 text-primary-foreground" />
+        <div className="fixed bottom-6 right-6 z-50" data-testid="videoask-container">
+          {/* VideoAsk Embed - Replace YOUR_VIDEOASK_ID with actual ID */}
+          <div className="relative">
+            <a 
+              href="https://www.videoask.com/" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="block w-16 h-16 rounded-full bg-gradient-to-r from-primary to-purple-600 shadow-lg flex items-center justify-center cursor-pointer hover:scale-105 transition-transform"
+              data-testid="videoask-widget"
+            >
+              <MessageSquare className="w-7 h-7 text-white" />
+            </a>
+            <span className="absolute -top-1 -right-1 w-4 h-4 bg-green-500 rounded-full border-2 border-background animate-pulse" />
           </div>
-          <p className="text-xs text-muted-foreground mt-2 text-center">Ask us</p>
+          <p className="text-xs text-muted-foreground mt-2 text-center">Video Help</p>
         </div>
       )}
     </div>

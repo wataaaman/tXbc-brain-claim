@@ -178,6 +178,32 @@ export default function DocumentGenerator() {
     toast.success('Letter downloaded');
   };
 
+  const downloadPdf = async (letterId) => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_URL}/api/letters/${letterId}/pdf`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      });
+
+      if (response.ok) {
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `wcb-letter-${letterId}.pdf`;
+        a.click();
+        URL.revokeObjectURL(url);
+        toast.success('PDF downloaded');
+      } else {
+        toast.error('Failed to generate PDF');
+      }
+    } catch (error) {
+      toast.error('Failed to download PDF');
+    }
+  };
+
   return (
     <AppLayout>
       <div className="page-container animate-fade-in">

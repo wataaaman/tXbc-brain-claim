@@ -529,7 +529,7 @@ def main():
             print("⚠️ Comprehensive timeline failed")
     
     # Test PDF generation
-    if not tester.test_pdf_generation():
+    if not tester.test_pdf_generation(claim_id):
         print("⚠️ PDF generation failed")
     
     # Test Pinata IPFS upload (may fail with invalid key but should attempt)

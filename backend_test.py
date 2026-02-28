@@ -222,7 +222,7 @@ class WCBBackendTester:
 
     def test_otp_flow(self):
         """Test OTP email flow (mocked)"""
-        test_email = f"test+{datetime.now().strftime('%Y%m%d%H%M%S')}@example.com"
+        test_email = f"test{datetime.now().strftime('%Y%m%d%H%M%S')}@example.com"
         
         success1, response1 = self.run_test(
             "Send OTP",

@@ -298,7 +298,7 @@ class WCBBackendTester:
             
         return success
 
-    def test_pdf_generation(self):
+    def test_pdf_generation(self, claim_id=None):
         """Test PDF generation endpoint"""
         if not self.token:
             print("❌ No token available for PDF test")
@@ -307,7 +307,7 @@ class WCBBackendTester:
         # First create a letter to generate PDF from
         letter_data = {
             "template_type": "claim_file_request",
-            "claim_id": None,
+            "claim_id": claim_id,  # Use the provided claim_id
             "custom_data": {}
         }
         

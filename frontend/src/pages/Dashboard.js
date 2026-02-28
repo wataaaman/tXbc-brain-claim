@@ -279,6 +279,11 @@ export default function Dashboard() {
                         {claim.description}
                       </p>
                       <div className="flex gap-2">
+                        <Link to={`/timeline/${claim.claim_id}`}>
+                          <Button variant="outline" size="sm" className="rounded-full" data-testid={`timeline-btn-${claim.claim_id}`}>
+                            <Clock className="w-4 h-4 mr-1" /> Timeline
+                          </Button>
+                        </Link>
                         <Link to={`/documents?claim=${claim.claim_id}`}>
                           <Button variant="outline" size="sm" className="rounded-full">
                             <FileText className="w-4 h-4 mr-1" /> Letters

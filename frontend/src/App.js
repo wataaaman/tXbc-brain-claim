@@ -13,6 +13,7 @@ import DocumentGenerator from './pages/DocumentGenerator';
 import EvidenceManager from './pages/EvidenceManager';
 import AIAssistant from './pages/AIAssistant';
 import Settings from './pages/Settings';
+import ClaimTimeline from './pages/ClaimTimeline';
 
 // Protected Route Component
 function ProtectedRoute({ children }) {
@@ -68,6 +69,9 @@ function AppRouter() {
       } />
       <Route path="/settings" element={
         <ProtectedRoute><Settings /></ProtectedRoute>
+      } />
+      <Route path="/timeline/:claimId" element={
+        <ProtectedRoute><ClaimTimeline /></ProtectedRoute>
       } />
       
       {/* Fallback */}

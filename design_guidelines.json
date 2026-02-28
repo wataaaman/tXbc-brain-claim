@@ -1,0 +1,157 @@
+{
+  "brand_identity": {
+    "name": "NeuroClaim Support",
+    "mission": "Empowering injured workers with TBI to navigate WCB claims with clarity, calm, and confidence.",
+    "tone": "Calm, Professional, Supportive, Clear, Advocate",
+    "archetype": "The Gentle Guide (Archetype 1 + 4 mix)",
+    "design_principles": [
+      "Cognitive Clarity: One task at a time. No clutter.",
+      "Sensory Safety: Low glare, warm tones, no flashing.",
+      "Human Warmth: Soft shapes, empathetic language.",
+      "Accessible by Default: Large text, high contrast, clear navigation."
+    ]
+  },
+  "typography": {
+    "font_family": {
+      "headings": "\"Manrope\", sans-serif",
+      "body": "\"Public Sans\", sans-serif",
+      "mono": "\"JetBrains Mono\", monospace"
+    },
+    "imports": [
+      "https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Public+Sans:wght@400;500;600&display=swap"
+    ],
+    "scale": {
+      "h1": "text-4xl md:text-5xl font-bold tracking-tight text-foreground",
+      "h2": "text-3xl md:text-4xl font-semibold tracking-tight text-foreground",
+      "h3": "text-2xl font-semibold text-foreground/90",
+      "body_large": "text-lg leading-relaxed text-foreground/90",
+      "body_base": "text-base leading-relaxed text-foreground/80",
+      "caption": "text-sm text-muted-foreground uppercase tracking-wider"
+    },
+    "rules": "Avoid pure black text on pure white. Use Stone-900 on Stone-50 for light mode. Use Stone-100 on Stone-900 for dark mode."
+  },
+  "colors": {
+    "theme_strategy": "Warm Utility (Stone/Slate Base)",
+    "light_mode": {
+      "background": "#FAFAF9",
+      "foreground": "#1C1917",
+      "card": "#FFFFFF",
+      "card_foreground": "#1C1917",
+      "primary": "#2563EB",
+      "primary_foreground": "#FFFFFF",
+      "secondary": "#E7E5E4",
+      "secondary_foreground": "#1C1917",
+      "muted": "#F5F5F4",
+      "muted_foreground": "#57534E",
+      "accent": "#F5F5F4",
+      "accent_foreground": "#1C1917",
+      "destructive": "#EF4444",
+      "destructive_foreground": "#FFFFFF",
+      "border": "#E7E5E4",
+      "input": "#E7E5E4",
+      "ring": "#2563EB"
+    },
+    "dark_mode": {
+      "background": "#0C0A09",
+      "foreground": "#F5F5F4",
+      "card": "#1C1917",
+      "card_foreground": "#F5F5F4",
+      "primary": "#3B82F6",
+      "primary_foreground": "#FFFFFF",
+      "secondary": "#292524",
+      "secondary_foreground": "#F5F5F4",
+      "muted": "#292524",
+      "muted_foreground": "#A8A29E",
+      "accent": "#292524",
+      "accent_foreground": "#F5F5F4",
+      "destructive": "#7F1D1D",
+      "destructive_foreground": "#F5F5F4",
+      "border": "#292524",
+      "input": "#292524",
+      "ring": "#3B82F6"
+    },
+    "user_options": {
+      "orange": "#D97706",
+      "green": "#16A34A",
+      "blue": "#2563EB"
+    }
+  },
+  "visual_enhancers": {
+    "radius": "rounded-xl",
+    "shadows": {
+      "card": "shadow-[0_2px_8px_rgba(0,0,0,0.04)]",
+      "hover": "shadow-[0_8px_16px_rgba(0,0,0,0.08)]",
+      "focus": "0 0 0 2px rgba(37, 99, 235, 0.2)"
+    },
+    "glass": "backdrop-blur-md bg-white/70 dark:bg-black/60 border border-white/20",
+    "borders": "border border-border/50"
+  },
+  "layout_strategies": {
+    "dashboard": "grid grid-cols-1 md:grid-cols-12 gap-6 p-6 md:p-8",
+    "dashboard_widgets": {
+      "timeline": "col-span-1 md:col-span-8 row-span-2",
+      "actions": "col-span-1 md:col-span-4",
+      "stats": "col-span-1 md:col-span-4"
+    },
+    "document_generator": "flex flex-col md:flex-row gap-8 h-[calc(100vh-4rem)]",
+    "reading_mode": "max-w-2xl mx-auto py-12 px-4 leading-loose"
+  },
+  "components_customization": {
+    "buttons": "h-12 px-6 rounded-full text-base font-medium transition-all hover:scale-[1.02]",
+    "inputs": "h-12 rounded-lg border-2 border-input focus:border-primary text-lg px-4 bg-background",
+    "cards": "rounded-2xl border-none shadow-sm bg-card p-6 md:p-8",
+    "dialogs": "rounded-2xl p-6 md:p-10",
+    "tabs": "h-12 bg-muted/50 p-1 rounded-full",
+    "sonner": "rounded-xl border border-border bg-background shadow-lg"
+  },
+  "image_assets": {
+    "hero_background": {
+      "url": "https://images.unsplash.com/photo-1768214399550-c1ea16ce9123",
+      "alt": "Abstract calming white fluid shapes",
+      "usage": "Background for Login/Register pages with 50% opacity overlay"
+    },
+    "empty_state": {
+      "url": "https://images.unsplash.com/photo-1762652345565-e38e420b6f30",
+      "alt": "Soft pastel spheres",
+      "usage": "Placeholder for empty lists or success states"
+    },
+    "community": {
+      "url": "https://images.unsplash.com/photo-1622675363311-3e1904dc1885",
+      "alt": "Diverse supportive team",
+      "usage": "Help center or Chatbot welcome screen"
+    }
+  },
+  "motion": {
+    "reduced_motion": "respect-media-query",
+    "page_transition": {
+      "initial": { "opacity": 0, "y": 10 },
+      "animate": { "opacity": 1, "y": 0 },
+      "exit": { "opacity": 0, "y": -10 },
+      "transition": { "duration": 0.3, "ease": "easeOut" }
+    },
+    "micro_interactions": "scale-95 on active, scale-[1.02] on hover for cards"
+  },
+  "accessibility_checklist": [
+    "Ensure 4.5:1 contrast ratio for all text.",
+    "Support text resizing up to 200%.",
+    "All interactive elements must be focusable via keyboard.",
+    "Use aria-labels for icon-only buttons.",
+    "Provide clear error messages with icons.",
+    "Avoid flashing animations.",
+    "Respect prefers-reduced-motion."
+  ],
+  "instructions_to_main_agent": [
+    "1. SETUP: Install fonts via index.css import.",
+    "2. THEME: Configure tailwind.config.js with the Stone color palette provided.",
+    "3. LAYOUT: Build the Dashboard using the 'Bento' Mode B but with reduced density.",
+    "4. COMPONENTS: Customize Shadcn components in /components/ui to match the 'rounded-xl' and 'h-12' specs.",
+    "5. FEATURES: Implement the 'Focus Mode' for the Document Generator (one step at a time).",
+    "6. IMAGES: Use the provided Unsplash URLs for backgrounds and empty states.",
+    "7. TESTING: Add data-testid to all inputs and buttons."
+  ],
+  "universal_guidelines": {
+    "do_not_use": ["Inter for headings", "Pure black #000000", "Small text < 14px"],
+    "must_use": ["Manrope for headings", "Stone-50 background", "Generous padding"],
+    "export_conventions": "Named exports for components, Default exports for pages."
+  }
+}

@@ -19,7 +19,8 @@ import {
   Clock, 
   CheckCircle,
   Loader2,
-  FileEdit
+  FileEdit,
+  FileDown
 } from 'lucide-react';
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;

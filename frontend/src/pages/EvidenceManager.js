@@ -334,7 +334,7 @@ export default function EvidenceManager() {
                       {item.description}
                     </p>
                     <div className="p-2 bg-muted/50 rounded-lg">
-                      <p className="text-xs text-muted-foreground mb-1">IPFS CID (MOCKED)</p>
+                      <p className="text-xs text-muted-foreground mb-1">IPFS CID</p>
                       <p className="text-xs font-mono truncate">{item.ipfs_cid}</p>
                     </div>
                     <div className="flex items-center justify-between text-xs text-muted-foreground">

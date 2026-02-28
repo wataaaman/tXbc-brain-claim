@@ -176,10 +176,10 @@ export default function EvidenceManager() {
           <div className="flex items-start gap-3">
             <HardDrive className="w-5 h-5 text-primary mt-0.5" />
             <div>
-              <p className="font-medium text-sm">IPFS Storage (MOCKED)</p>
+              <p className="font-medium text-sm">IPFS Storage via Pinata</p>
               <p className="text-sm text-muted-foreground">
-                Files are currently stored with simulated IPFS CIDs. To enable real IPFS storage via Pinata, 
-                add your Pinata JWT key to the backend configuration.
+                Files are uploaded to IPFS for decentralized, permanent storage. Each file receives a unique 
+                Content Identifier (CID) that can be used to retrieve it from any IPFS gateway.
               </p>
             </div>
           </div>

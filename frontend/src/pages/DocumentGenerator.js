@@ -381,21 +381,32 @@ export default function DocumentGenerator() {
                   <ScrollArea className="h-48">
                     <div className="space-y-2">
                       {letters.slice(0, 5).map((letter) => (
-                        <button
+                        <div
                           key={letter.letter_id}
-                          onClick={() => setGeneratedLetter(letter.content)}
-                          className="w-full p-3 rounded-lg text-left hover:bg-muted transition-colors"
+                          className="p-3 rounded-lg hover:bg-muted transition-colors"
                           data-testid={`letter-${letter.letter_id}`}
                         >
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm font-medium capitalize">
+                          <div className="flex items-center justify-between mb-2">
+                            <button
+                              onClick={() => setGeneratedLetter(letter.content)}
+                              className="text-sm font-medium capitalize text-left hover:text-primary"
+                            >
                               {letter.template_type.replace(/_/g, ' ')}
-                            </span>
+                            </button>
                             <span className="text-xs text-muted-foreground">
                               {new Date(letter.generated_at).toLocaleDateString()}
                             </span>
                           </div>
-                        </button>
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            className="rounded-full h-7 text-xs"
+                            onClick={() => downloadPdf(letter.letter_id)}
+                            data-testid={`pdf-${letter.letter_id}`}
+                          >
+                            <FileDown className="w-3 h-3 mr-1" /> PDF
+                          </Button>
+                        </div>
                       ))}
                     </div>
                   </ScrollArea>

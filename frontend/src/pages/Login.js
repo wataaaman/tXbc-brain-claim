@@ -1,44 +1,116 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useAppKit, useAppKitAccount, useAppKitProvider, useDisconnect } from '@reown/appkit/react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '../components/ui/card';
 import { Separator } from '../components/ui/separator';
 import { toast } from 'sonner';
-import { Brain, Mail, ArrowRight, Loader2, Wallet, Apple } from 'lucide-react';
+import { Brain, Mail, ArrowRight, Loader2, Wallet, Apple, CheckCircle2 } from 'lucide-react';
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
 
+// Supported wallet list
+const WalletIcons = () => (
+  <div className="flex items-center justify-center gap-1 mt-1">
+    <span className="text-[10px] text-muted-foreground">MetaMask</span>
+    <span className="text-muted-foreground">•</span>
+    <span className="text-[10px] text-muted-foreground">Rainbow</span>
+    <span className="text-muted-foreground">•</span>
+    <span className="text-[10px] text-muted-foreground">Coinbase</span>
+    <span className="text-muted-foreground">•</span>
+    <span className="text-[10px] text-muted-foreground">Trust</span>
+  </div>
+);
+
 export default function Login() {
   const navigate = useNavigate();
-  const { login, register, loginWithGoogle, sendOTP, verifyOTP } = useAuth();
+  const { loginWithGoogle, sendOTP, verifyOTP } = useAuth();
+  
+  // AppKit hooks for multi-wallet WalletConnect
+  const { open } = useAppKit();
+  const { address, isConnected } = useAppKitAccount();
+  const { walletProvider } = useAppKitProvider('eip155');
+  const { disconnect } = useDisconnect();
   
   const [isLoading, setIsLoading] = useState(false);
   const [walletLoading, setWalletLoading] = useState(false);
+  const [walletAuthDone, setWalletAuthDone] = useState(false);
   
-  // Email-first flow
+  // Email flow
   const [email, setEmail] = useState('');
-  const [step, setStep] = useState('email'); // 'email' | 'otp' | 'password'
+  const [step, setStep] = useState('email');
   const [otpCode, setOtpCode] = useState('');
-  const [password, setPassword] = useState('');
-  const [isNewUser, setIsNewUser] = useState(false);
-  const [name, setName] = useState('');
+
+  // Watch for wallet connection and authenticate
+  useEffect(() => {
+    if (isConnected && address && !walletAuthDone && !walletLoading) {
+      authenticateWithWallet(address);
+    }
+  }, [isConnected, address, walletAuthDone, walletLoading]);
+
+  const authenticateWithWallet = async (walletAddress) => {
+    setWalletLoading(true);
+    try {
+      // Get auth message from backend
+      const msgRes = await fetch(`${API_URL}/api/auth/wallet/message?address=${walletAddress}`);
+      if (!msgRes.ok) throw new Error('Failed to get auth message');
+      
+      const { message, nonce } = await msgRes.json();
+      
+      // Request signature
+      let signature;
+      if (walletProvider) {
+        signature = await walletProvider.request({
+          method: 'personal_sign',
+          params: [message, walletAddress]
+        });
+      } else if (window.ethereum) {
+        signature = await window.ethereum.request({
+          method: 'personal_sign',
+          params: [message, walletAddress]
+        });
+      } else {
+        throw new Error('No wallet provider');
+      }
+      
+      // Verify with backend
+      const verifyRes = await fetch(`${API_URL}/api/auth/wallet/verify`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: walletAddress, message, signature, nonce })
+      });
+      
+      if (!verifyRes.ok) throw new Error('Verification failed');
+      
+      const data = await verifyRes.json();
+      localStorage.setItem('token', data.token);
+      setWalletAuthDone(true);
+      toast.success('Wallet connected!');
+      navigate('/dashboard');
+      
+    } catch (error) {
+      console.error('Wallet auth error:', error);
+      toast.error(error.code === 4001 ? 'Cancelled' : error.message);
+      await disconnect();
+      setWalletAuthDone(false);
+    } finally {
+      setWalletLoading(false);
+    }
+  };
 
   const handleEmailSubmit = async (e) => {
     e.preventDefault();
     if (!email) return;
-    
     setIsLoading(true);
     try {
-      // Send OTP for frictionless login
       const result = await sendOTP(email);
       setStep('otp');
-      toast.success('Code sent to your email');
-      if (result.note) {
-        toast.info(result.note);
-      }
+      toast.success('Code sent!');
+      if (result.note) toast.info(result.note);
     } catch (error) {
       toast.error(error.message);
     } finally {
@@ -49,7 +121,6 @@ export default function Login() {
   const handleOTPSubmit = async (e) => {
     e.preventDefault();
     if (otpCode.length !== 6) return;
-    
     setIsLoading(true);
     try {
       await verifyOTP(email, otpCode);
@@ -62,77 +133,12 @@ export default function Login() {
     }
   };
 
-  const handleGoogleLogin = () => {
-    loginWithGoogle();
-  };
-
-  const handleAppleLogin = () => {
-    // Apple Sign-In - would need Apple Developer account setup
-    toast.info('Apple Sign-In coming soon');
-  };
-
-  const handleWalletConnect = async () => {
-    setWalletLoading(true);
-    try {
-      // Check if MetaMask or other wallet is available
-      if (typeof window.ethereum === 'undefined') {
-        toast.error('No wallet detected. Please install MetaMask or another Web3 wallet.');
-        setWalletLoading(false);
-        return;
-      }
-
-      // Request account access
-      const accounts = await window.ethereum.request({ 
-        method: 'eth_requestAccounts' 
-      });
-      
-      const address = accounts[0];
-      
-      // Get authentication message from backend
-      const messageResponse = await fetch(`${API_URL}/api/auth/wallet/message?address=${address}`);
-      if (!messageResponse.ok) {
-        throw new Error('Failed to get authentication message');
-      }
-      const { message, nonce } = await messageResponse.json();
-      
-      // Request signature from wallet
-      const signature = await window.ethereum.request({
-        method: 'personal_sign',
-        params: [message, address]
-      });
-      
-      // Verify signature with backend
-      const verifyResponse = await fetch(`${API_URL}/api/auth/wallet/verify`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ address, message, signature, nonce })
-      });
-      
-      if (!verifyResponse.ok) {
-        throw new Error('Wallet verification failed');
-      }
-      
-      const data = await verifyResponse.json();
-      localStorage.setItem('token', data.token);
-      toast.success('Wallet connected successfully!');
-      navigate('/dashboard');
-      
-    } catch (error) {
-      console.error('Wallet connect error:', error);
-      if (error.code === 4001) {
-        toast.error('Connection cancelled');
-      } else {
-        toast.error(error.message || 'Failed to connect wallet');
-      }
-    } finally {
-      setWalletLoading(false);
-    }
+  const handleWalletConnect = () => {
+    open({ view: 'Connect' });
   };
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
-      {/* Gradient Background */}
       <div className="fixed inset-0 bg-gradient-to-br from-primary/5 via-background to-purple-500/5" />
       
       <div className="relative w-full max-w-md">
@@ -152,20 +158,18 @@ export default function Login() {
         <Card className="card-warm border-none shadow-2xl">
           <CardHeader className="text-center pb-2">
             <CardTitle className="text-2xl font-[Manrope]">Welcome</CardTitle>
-            <CardDescription className="text-base">
-              Sign in to manage your WCB claim
-            </CardDescription>
+            <CardDescription className="text-base">Sign in to manage your WCB claim</CardDescription>
           </CardHeader>
           
           <CardContent className="space-y-6">
-            {/* Social Login Buttons - Always visible for frictionless access */}
+            {/* Auth Buttons */}
             <div className="grid gap-3">
               {/* Google */}
               <Button
                 type="button"
                 variant="outline"
-                className="w-full h-14 rounded-xl text-base font-medium hover:bg-muted/50 transition-all"
-                onClick={handleGoogleLogin}
+                className="w-full h-14 rounded-xl text-base font-medium hover:bg-muted/50"
+                onClick={() => loginWithGoogle()}
                 data-testid="google-login-btn"
               >
                 <svg className="w-6 h-6 mr-3" viewBox="0 0 24 24">
@@ -181,30 +185,35 @@ export default function Login() {
               <Button
                 type="button"
                 variant="outline"
-                className="w-full h-14 rounded-xl text-base font-medium hover:bg-muted/50 transition-all"
-                onClick={handleAppleLogin}
+                className="w-full h-14 rounded-xl text-base font-medium hover:bg-muted/50"
+                onClick={() => toast.info('Apple Sign-In coming soon')}
                 data-testid="apple-login-btn"
               >
                 <Apple className="w-6 h-6 mr-3" />
                 Continue with Apple
               </Button>
 
-              {/* Wallet Connect */}
-              <Button
-                type="button"
-                variant="outline"
-                className="w-full h-14 rounded-xl text-base font-medium hover:bg-muted/50 transition-all bg-gradient-to-r from-orange-500/10 to-purple-500/10 border-orange-500/20"
-                onClick={handleWalletConnect}
-                disabled={walletLoading}
-                data-testid="wallet-connect-btn"
-              >
-                {walletLoading ? (
-                  <Loader2 className="w-6 h-6 mr-3 animate-spin" />
-                ) : (
-                  <Wallet className="w-6 h-6 mr-3 text-orange-500" />
-                )}
-                Connect Wallet
-              </Button>
+              {/* WalletConnect Multi-Wallet */}
+              <div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full h-14 rounded-xl text-base font-medium hover:bg-muted/50 bg-gradient-to-r from-blue-500/10 via-purple-500/10 to-orange-500/10 border-purple-500/20 hover:border-purple-500/40"
+                  onClick={handleWalletConnect}
+                  disabled={walletLoading}
+                  data-testid="wallet-connect-btn"
+                >
+                  {walletLoading ? (
+                    <Loader2 className="w-6 h-6 mr-3 animate-spin" />
+                  ) : isConnected ? (
+                    <CheckCircle2 className="w-6 h-6 mr-3 text-green-500" />
+                  ) : (
+                    <Wallet className="w-6 h-6 mr-3 text-purple-500" />
+                  )}
+                  {walletLoading ? 'Signing...' : isConnected ? 'Connected' : 'Connect Wallet'}
+                </Button>
+                <WalletIcons />
+              </div>
             </div>
 
             {/* Divider */}
@@ -243,11 +252,7 @@ export default function Login() {
                   disabled={isLoading}
                   data-testid="continue-btn"
                 >
-                  {isLoading ? (
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                  ) : (
-                    <>Continue <ArrowRight className="ml-2 w-5 h-5" /></>
-                  )}
+                  {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <>Continue <ArrowRight className="ml-2 w-5 h-5" /></>}
                 </Button>
               </form>
             )}
@@ -255,9 +260,7 @@ export default function Login() {
             {step === 'otp' && (
               <form onSubmit={handleOTPSubmit} className="space-y-4">
                 <div className="text-center mb-4">
-                  <p className="text-sm text-muted-foreground">
-                    We sent a 6-digit code to <strong>{email}</strong>
-                  </p>
+                  <p className="text-sm text-muted-foreground">Code sent to <strong>{email}</strong></p>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="otp" className="text-base">Verification Code</Label>
@@ -279,38 +282,24 @@ export default function Login() {
                   disabled={isLoading || otpCode.length !== 6}
                   data-testid="verify-btn"
                 >
-                  {isLoading ? (
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                  ) : (
-                    <>Verify & Sign In <ArrowRight className="ml-2 w-5 h-5" /></>
-                  )}
+                  {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <>Verify & Sign In <ArrowRight className="ml-2 w-5 h-5" /></>}
                 </Button>
-                <Button 
-                  type="button" 
-                  variant="ghost"
-                  className="w-full"
-                  onClick={() => {
-                    setStep('email');
-                    setOtpCode('');
-                  }}
-                >
+                <Button type="button" variant="ghost" className="w-full" onClick={() => { setStep('email'); setOtpCode(''); }}>
                   Use different email
                 </Button>
               </form>
             )}
           </CardContent>
           
-          <CardFooter className="flex flex-col gap-4 pt-0">
-            <p className="text-xs text-center text-muted-foreground">
-              By signing in, you agree to our Terms of Service and Privacy Policy
+          <CardFooter className="pt-0">
+            <p className="text-xs text-center text-muted-foreground w-full">
+              By signing in, you agree to our Terms of Service
             </p>
           </CardFooter>
         </Card>
 
-        {/* Help text */}
         <p className="text-center text-sm text-muted-foreground mt-6">
-          Need help? Contact support or visit our{' '}
-          <Link to="/policies" className="text-primary hover:underline">Policy Library</Link>
+          Need help? Visit our <Link to="/policies" className="text-primary hover:underline">Policy Library</Link>
         </p>
       </div>
     </div>

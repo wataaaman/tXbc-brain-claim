@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-route
 import { Toaster } from 'sonner';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
+import { Web3Provider } from './config/web3';
 
 // Pages
 import Landing from './pages/Landing';
@@ -82,20 +83,22 @@ function AppRouter() {
 
 function App() {
   return (
-    <ThemeProvider>
-      <AuthProvider>
-        <BrowserRouter>
-          <AppRouter />
-          <Toaster 
-            position="top-right" 
-            richColors 
-            toastOptions={{
-              className: 'rounded-xl'
-            }}
-          />
-        </BrowserRouter>
-      </AuthProvider>
-    </ThemeProvider>
+    <Web3Provider>
+      <ThemeProvider>
+        <AuthProvider>
+          <BrowserRouter>
+            <AppRouter />
+            <Toaster 
+              position="top-right" 
+              richColors 
+              toastOptions={{
+                className: 'rounded-xl'
+              }}
+            />
+          </BrowserRouter>
+        </AuthProvider>
+      </ThemeProvider>
+    </Web3Provider>
   );
 }
 

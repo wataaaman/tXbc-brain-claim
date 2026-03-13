@@ -17,6 +17,11 @@ import base64
 import httpx
 import json
 import asyncio
+import secrets
+
+# Eth imports for wallet auth
+from eth_account import Account
+from eth_account.messages import encode_defunct
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -408,6 +413,144 @@ async def logout(request: Request, response: Response):
     
     response.delete_cookie(key="session_token", path="/")
     return {"message": "Logged out successfully"}
+
+# ============== WALLET AUTH ROUTES ==============
+
+class WalletAuthMessageResponse(BaseModel):
+    message: str
+    nonce: str
+
+class WalletVerifyRequest(BaseModel):
+    address: str
+    message: str
+    signature: str
+    nonce: str
+
+@api_router.get("/auth/wallet/message")
+async def get_wallet_auth_message(address: str):
+    """Generate authentication message for wallet signing"""
+    # Basic validation
+    if not address.startswith("0x") or len(address) != 42:
+        raise HTTPException(status_code=400, detail="Invalid wallet address format")
+    
+    # Generate unique nonce
+    nonce = secrets.token_hex(16)
+    
+    # Store nonce (expires in 10 minutes)
+    await db.wallet_nonces.delete_many({"address": address.lower()})
+    await db.wallet_nonces.insert_one({
+        "address": address.lower(),
+        "nonce": nonce,
+        "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+        "used": False
+    })
+    
+    # Create message
+    message = f"""NeuroClaim Support wants you to sign in with your Ethereum account.
+
+Wallet: {address}
+Nonce: {nonce}
+
+This request will not trigger a blockchain transaction or cost any gas fees."""
+    
+    return WalletAuthMessageResponse(message=message, nonce=nonce)
+
+@api_router.post("/auth/wallet/verify")
+async def verify_wallet_signature(request: WalletVerifyRequest, response: Response):
+    """Verify wallet signature and create session"""
+    address = request.address.lower()
+    
+    # Check nonce exists and not used
+    nonce_doc = await db.wallet_nonces.find_one({
+        "address": address,
+        "nonce": request.nonce,
+        "used": False
+    }, {"_id": 0})
+    
+    if not nonce_doc:
+        raise HTTPException(status_code=401, detail="Invalid or expired nonce")
+    
+    # Check expiration
+    expires_at = datetime.fromisoformat(nonce_doc["expires_at"])
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < datetime.now(timezone.utc):
+        raise HTTPException(status_code=401, detail="Nonce expired")
+    
+    # Verify signature
+    try:
+        message_hash = encode_defunct(text=request.message)
+        recovered_address = Account.recover_message(message_hash, signature=request.signature)
+        
+        if recovered_address.lower() != address:
+            raise HTTPException(status_code=401, detail="Signature verification failed")
+    except Exception as e:
+        logger.error(f"Wallet signature verification error: {e}")
+        raise HTTPException(status_code=401, detail="Invalid signature")
+    
+    # Mark nonce as used
+    await db.wallet_nonces.update_one(
+        {"address": address, "nonce": request.nonce},
+        {"$set": {"used": True}}
+    )
+    
+    # Get or create user
+    user = await db.users.find_one({"wallet_address": address}, {"_id": 0})
+    
+    if not user:
+        user_id = f"user_{uuid.uuid4().hex[:12]}"
+        user = {
+            "user_id": user_id,
+            "email": f"{address[:8]}...{address[-4:]}@wallet",
+            "name": f"Wallet {address[:6]}...{address[-4:]}",
+            "wallet_address": address,
+            "password": None,
+            "picture": None,
+            "has_2fa": False,
+            "auth_type": "wallet",
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        await db.users.insert_one(user)
+    else:
+        user_id = user["user_id"]
+        # Update last login
+        await db.users.update_one(
+            {"user_id": user_id},
+            {"$set": {"last_login": datetime.now(timezone.utc).isoformat()}}
+        )
+    
+    # Create session
+    session_token = f"session_{uuid.uuid4().hex}"
+    await db.user_sessions.delete_many({"user_id": user_id})
+    await db.user_sessions.insert_one({
+        "user_id": user_id,
+        "session_token": session_token,
+        "expires_at": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+    
+    response.set_cookie(
+        key="session_token",
+        value=session_token,
+        httponly=True,
+        secure=True,
+        samesite="none",
+        max_age=7*24*60*60,
+        path="/"
+    )
+    
+    token = create_token(user_id, user["email"])
+    
+    return {
+        "token": token,
+        "user": {
+            "user_id": user_id,
+            "email": user["email"],
+            "name": user["name"],
+            "wallet_address": address,
+            "picture": user.get("picture")
+        }
+    }
 
 # ============== 2FA ROUTES ==============
 

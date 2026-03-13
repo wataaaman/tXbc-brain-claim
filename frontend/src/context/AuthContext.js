@@ -89,6 +89,31 @@ export function AuthProvider({ children }) {
     window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
   };
 
+  const loginWithApple = () => {
+    // Apple Sign-In - would need Apple Developer setup
+    throw new Error('Apple Sign-In not yet configured');
+  };
+
+  const loginWithWallet = async (address, signature, message, nonce) => {
+    const response = await fetch(`${API_URL}/api/auth/wallet/verify`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ address, message, signature, nonce })
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Wallet verification failed');
+    }
+
+    const data = await response.json();
+    setToken(data.token);
+    setUser(data.user);
+    localStorage.setItem('token', data.token);
+    return data;
+  };
+
   const processOAuthSession = async (sessionId) => {
     const response = await fetch(`${API_URL}/api/auth/session`, {
       method: 'POST',
@@ -163,6 +188,8 @@ export function AuthProvider({ children }) {
     login,
     register,
     loginWithGoogle,
+    loginWithApple,
+    loginWithWallet,
     processOAuthSession,
     sendOTP,
     verifyOTP,

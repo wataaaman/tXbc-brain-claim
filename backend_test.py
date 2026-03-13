@@ -466,6 +466,78 @@ class WCBBackendTester:
             self.tests_run += 1
             return False
 
+    def test_wallet_auth_message(self):
+        """Test wallet authentication message endpoint"""
+        test_address = "0x742f35Cc6Cd4C442C3d5f7a8Cc5D7E3b5a0E5b2F"
+        
+        success, response = self.run_test(
+            "Wallet Auth Message",
+            "GET",
+            f"api/auth/wallet/message?address={test_address}",
+            200
+        )
+        
+        if success and isinstance(response, dict):
+            required_keys = ['message', 'nonce']
+            missing_keys = [key for key in required_keys if key not in response]
+            if missing_keys:
+                print(f"⚠️ Missing wallet message response keys: {missing_keys}")
+                return False
+            print(f"✅ Wallet message contains: message and nonce")
+            
+        return success
+
+    def test_wallet_auth_verify_endpoint(self):
+        """Test wallet verification endpoint exists (without valid signature)"""
+        # This will fail with invalid signature but confirms endpoint exists
+        test_data = {
+            "address": "0x742f35Cc6Cd4C442C3d5f7a8Cc5D7E3b5a0E5b2F",
+            "message": "Test message",
+            "signature": "0xinvalidsignature",
+            "nonce": "test_nonce"
+        }
+        
+        success, response = self.run_test(
+            "Wallet Verify Endpoint (Expected 401)",
+            "POST",
+            "api/auth/wallet/verify",
+            401,  # Expecting failure due to invalid signature
+            data=test_data
+        )
+        
+        return success
+
+    def test_email_otp_endpoints(self):
+        """Test email OTP endpoints"""
+        test_email = f"otp_test_{datetime.now().strftime('%Y%m%d%H%M%S')}@example.com"
+        
+        # Test send OTP
+        success1, response1 = self.run_test(
+            "Send Email OTP",
+            "POST",
+            f"api/auth/otp/send?email={test_email}",
+            200
+        )
+        
+        if not success1:
+            return False
+            
+        # Test verify OTP (will fail with wrong code but confirms endpoint exists)
+        verify_data = {
+            "email": test_email,
+            "otp_code": "123456"  # Wrong code on purpose
+        }
+        
+        success2, response2 = self.run_test(
+            "Verify Email OTP (Expected 400)",
+            "POST", 
+            "api/auth/otp/verify",
+            400,  # Expecting failure due to wrong OTP
+            data=verify_data
+        )
+        
+        return success1 and success2
+
 def main():
     # Setup
     tester = WCBBackendTester()
@@ -540,6 +612,20 @@ def main():
     # Test AI draft letter
     if not tester.test_ai_draft_letter(claim_id):
         print("⚠️ AI draft letter failed")
+
+    # === NEW FRICTIONLESS AUTH TESTING ===
+    print("\n🔐 Testing New Frictionless Authentication Features:")
+    
+    # Test wallet authentication endpoints
+    if not tester.test_wallet_auth_message():
+        print("⚠️ Wallet auth message endpoint failed")
+    
+    if not tester.test_wallet_auth_verify_endpoint():
+        print("⚠️ Wallet verify endpoint failed")
+    
+    # Test email OTP endpoints
+    if not tester.test_email_otp_endpoints():
+        print("⚠️ Email OTP endpoints failed")
 
     # Print final results
     print("\n" + "=" * 60)

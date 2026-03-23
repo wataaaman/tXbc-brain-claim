@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 
 class WCBBackendTester:
-    def __init__(self, base_url="https://brain-collective.preview.emergentagent.com"):
+    def __init__(self, base_url="https://life-show-portal.preview.emergentagent.com"):
         self.base_url = base_url
         self.token = None
         self.user_id = None

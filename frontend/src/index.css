@@ -6,68 +6,69 @@
 
 @layer base {
     :root {
-        /* NeuroClaim Light Theme - Warm Stone */
-        --background: 40 6% 97%;
-        --foreground: 24 10% 10%;
-        --card: 0 0% 100%;
-        --card-foreground: 24 10% 10%;
-        --popover: 0 0% 100%;
-        --popover-foreground: 24 10% 10%;
-        --primary: 217 91% 60%;
+        /* Tech X Brain Collective - Cyberpunk Light */
+        --background: 230 25% 97%;
+        --foreground: 230 25% 10%;
+        --card: 230 20% 100%;
+        --card-foreground: 230 25% 10%;
+        --popover: 230 20% 100%;
+        --popover-foreground: 230 25% 10%;
+        --primary: 250 90% 60%;
         --primary-foreground: 0 0% 100%;
-        --secondary: 30 6% 90%;
-        --secondary-foreground: 24 10% 10%;
-        --muted: 40 6% 96%;
-        --muted-foreground: 25 5% 35%;
-        --accent: 40 6% 96%;
-        --accent-foreground: 24 10% 10%;
+        --secondary: 220 15% 90%;
+        --secondary-foreground: 230 25% 10%;
+        --muted: 225 15% 94%;
+        --muted-foreground: 230 10% 40%;
+        --accent: 195 90% 50%;
+        --accent-foreground: 0 0% 100%;
         --destructive: 0 84% 60%;
         --destructive-foreground: 0 0% 100%;
-        --border: 30 6% 90%;
-        --input: 30 6% 90%;
-        --ring: 217 91% 60%;
+        --border: 225 15% 88%;
+        --input: 225 15% 88%;
+        --ring: 250 90% 60%;
         --radius: 0.75rem;
         
-        /* User color options */
-        --accent-orange: 38 92% 50%;
-        --accent-green: 142 71% 45%;
-        --accent-blue: 217 91% 60%;
+        /* Tech X custom */
+        --neon-blue: 195 100% 50%;
+        --neon-purple: 270 100% 65%;
+        --neon-cyan: 180 100% 50%;
+        --flare-orange: 30 100% 55%;
         
         /* Chart colors */
-        --chart-1: 217 91% 60%;
-        --chart-2: 142 71% 45%;
-        --chart-3: 38 92% 50%;
-        --chart-4: 280 65% 60%;
+        --chart-1: 250 90% 60%;
+        --chart-2: 195 90% 50%;
+        --chart-3: 270 100% 65%;
+        --chart-4: 30 100% 55%;
         --chart-5: 340 75% 55%;
     }
 
     .dark {
-        /* NeuroClaim Dark Theme - Deep Stone */
-        --background: 20 14% 4%;
-        --foreground: 40 6% 96%;
-        --card: 24 10% 10%;
-        --card-foreground: 40 6% 96%;
-        --popover: 24 10% 10%;
-        --popover-foreground: 40 6% 96%;
-        --primary: 213 94% 68%;
+        /* Tech X Brain Collective - Cyberpunk Dark */
+        --background: 230 30% 6%;
+        --foreground: 210 20% 95%;
+        --card: 230 25% 10%;
+        --card-foreground: 210 20% 95%;
+        --popover: 230 25% 10%;
+        --popover-foreground: 210 20% 95%;
+        --primary: 250 90% 65%;
         --primary-foreground: 0 0% 100%;
-        --secondary: 12 6% 15%;
-        --secondary-foreground: 40 6% 96%;
-        --muted: 12 6% 15%;
-        --muted-foreground: 24 6% 65%;
-        --accent: 12 6% 15%;
-        --accent-foreground: 40 6% 96%;
+        --secondary: 230 20% 15%;
+        --secondary-foreground: 210 20% 95%;
+        --muted: 230 20% 14%;
+        --muted-foreground: 220 15% 55%;
+        --accent: 195 100% 50%;
+        --accent-foreground: 0 0% 100%;
         --destructive: 0 63% 31%;
-        --destructive-foreground: 40 6% 96%;
-        --border: 12 6% 15%;
-        --input: 12 6% 15%;
-        --ring: 213 94% 68%;
+        --destructive-foreground: 210 20% 95%;
+        --border: 230 20% 16%;
+        --input: 230 20% 16%;
+        --ring: 250 90% 65%;
     }
 
     /* Accent color variants */
     .accent-orange {
-        --primary: 38 92% 50%;
-        --ring: 38 92% 50%;
+        --primary: 30 100% 55%;
+        --ring: 30 100% 55%;
     }
 
     .accent-green {
@@ -81,8 +82,8 @@
     }
 
     .dark.accent-orange {
-        --primary: 38 92% 55%;
-        --ring: 38 92% 55%;
+        --primary: 30 100% 60%;
+        --ring: 30 100% 60%;
     }
 
     .dark.accent-green {
@@ -140,19 +141,76 @@
         @apply min-h-[48px] min-w-[48px];
     }
 
-    /* Card with warm shadow */
+    /* Card with cyber glow */
     .card-warm {
-        @apply rounded-2xl border-none bg-card p-6 md:p-8;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+        @apply rounded-2xl border border-border/50 bg-card p-6 md:p-8;
+        box-shadow: 0 2px 8px rgba(100, 80, 255, 0.04);
+        transition: all 0.3s ease;
     }
 
     .card-warm:hover {
-        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.08);
+        box-shadow: 0 8px 24px rgba(100, 80, 255, 0.12);
+        border-color: hsl(var(--primary) / 0.3);
     }
 
-    /* Glass effect */
+    /* Glass effect - cyberpunk */
     .glass {
-        @apply backdrop-blur-md bg-white/70 dark:bg-black/60 border border-white/20;
+        @apply backdrop-blur-xl bg-white/60 dark:bg-black/40 border border-white/20 dark:border-white/10;
+    }
+
+    /* Neon glow cards */
+    .card-neon {
+        @apply rounded-2xl border border-border/50 bg-card p-6 md:p-8 relative overflow-hidden;
+        transition: all 0.3s ease;
+    }
+
+    .card-neon::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 2px;
+        background: linear-gradient(90deg, hsl(250 90% 60%), hsl(195 100% 50%), hsl(270 100% 65%));
+        opacity: 0;
+        transition: opacity 0.3s ease;
+    }
+
+    .card-neon:hover::before {
+        opacity: 1;
+    }
+
+    .card-neon:hover {
+        box-shadow: 0 0 30px rgba(100, 80, 255, 0.1);
+    }
+
+    /* Gradient text */
+    .text-gradient {
+        background: linear-gradient(135deg, hsl(250 90% 60%), hsl(195 100% 50%));
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+
+    .text-gradient-warm {
+        background: linear-gradient(135deg, hsl(250 90% 60%), hsl(270 100% 65%), hsl(195 100% 50%));
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+
+    /* Cyber grid background */
+    .cyber-grid {
+        background-image: 
+            linear-gradient(rgba(100, 80, 255, 0.03) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(100, 80, 255, 0.03) 1px, transparent 1px);
+        background-size: 40px 40px;
+    }
+
+    .dark .cyber-grid {
+        background-image: 
+            linear-gradient(rgba(100, 80, 255, 0.06) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(100, 80, 255, 0.06) 1px, transparent 1px);
     }
 
     /* Page container */

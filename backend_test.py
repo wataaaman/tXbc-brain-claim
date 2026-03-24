@@ -1,644 +1,365 @@
+#!/usr/bin/env python3
+"""
+Backend API Testing for Tech X Brain Collective
+Tests all backend APIs according to test_result.md requirements
+"""
+
 import requests
-import sys
 import json
+import sys
 from datetime import datetime
 
-class WCBBackendTester:
-    def __init__(self, base_url="https://life-show-portal.preview.emergentagent.com"):
-        self.base_url = base_url
-        self.token = None
-        self.user_id = None
-        self.tests_run = 0
-        self.tests_passed = 0
+# Backend URL from frontend/.env
+BASE_URL = "https://life-show-portal.preview.emergentagent.com/api"
+
+class BackendTester:
+    def __init__(self):
         self.session = requests.Session()
-        self.session.headers.update({'Content-Type': 'application/json'})
-
-    def run_test(self, name, method, endpoint, expected_status, data=None, headers=None):
-        """Run a single API test"""
-        url = f"{self.base_url}/{endpoint}"
-        test_headers = self.session.headers.copy()
-        if headers:
-            test_headers.update(headers)
+        self.auth_token = None
+        self.test_results = []
         
-        self.tests_run += 1
-        print(f"\n🔍 Testing {name}...")
-        print(f"   URL: {url}")
+    def log_test(self, test_name, success, details="", response_data=None):
+        """Log test result"""
+        result = {
+            "test": test_name,
+            "success": success,
+            "details": details,
+            "timestamp": datetime.now().isoformat()
+        }
+        if response_data:
+            result["response_data"] = response_data
+        self.test_results.append(result)
+        
+        status = "✅ PASS" if success else "❌ FAIL"
+        print(f"{status} {test_name}: {details}")
+        
+    def register_and_login(self):
+        """Register a test user and get auth token"""
+        print("\n=== AUTHENTICATION SETUP ===")
+        
+        # Register user
+        register_data = {
+            "email": "test@techxbrain.com",
+            "name": "Test User",
+            "password": "test123456"
+        }
         
         try:
-            if method == 'GET':
-                response = self.session.get(url, headers=test_headers)
-            elif method == 'POST':
-                response = self.session.post(url, json=data, headers=test_headers)
-            elif method == 'PUT':
-                response = self.session.put(url, json=data, headers=test_headers)
-            elif method == 'DELETE':
-                response = self.session.delete(url, headers=test_headers)
-
-            success = response.status_code == expected_status
-            if success:
-                self.tests_passed += 1
-                print(f"✅ Passed - Status: {response.status_code}")
+            response = self.session.post(f"{BASE_URL}/auth/register", json=register_data)
+            if response.status_code == 200:
+                data = response.json()
+                self.auth_token = data.get("token")
+                self.session.headers.update({"Authorization": f"Bearer {self.auth_token}"})
+                self.log_test("User Registration", True, "Successfully registered test user")
+                return True
+            elif response.status_code == 400 and "already registered" in response.text:
+                # User exists, try login
+                login_data = {
+                    "email": "test@techxbrain.com", 
+                    "password": "test123456"
+                }
+                response = self.session.post(f"{BASE_URL}/auth/login", json=login_data)
+                if response.status_code == 200:
+                    data = response.json()
+                    self.auth_token = data.get("token")
+                    self.session.headers.update({"Authorization": f"Bearer {self.auth_token}"})
+                    self.log_test("User Login", True, "Successfully logged in existing user")
+                    return True
+                else:
+                    self.log_test("User Login", False, f"Login failed: {response.status_code} - {response.text}")
+                    return False
             else:
-                print(f"❌ Failed - Expected {expected_status}, got {response.status_code}")
-                try:
-                    error_detail = response.json()
-                    print(f"   Error: {error_detail}")
-                except:
-                    print(f"   Response: {response.text[:200]}...")
-
-            return success, response.json() if response.content and 'application/json' in response.headers.get('content-type', '') else response.text
-
+                self.log_test("User Registration", False, f"Registration failed: {response.status_code} - {response.text}")
+                return False
         except Exception as e:
-            print(f"❌ Failed - Error: {str(e)}")
-            return False, {}
-
+            self.log_test("Authentication Setup", False, f"Exception: {str(e)}")
+            return False
+    
     def test_health_check(self):
-        """Test health endpoint"""
-        success, response = self.run_test(
-            "Health Check",
-            "GET",
-            "api/health",
-            200
-        )
-        return success
-
-    def test_register(self, name, email, password):
-        """Test user registration"""
-        success, response = self.run_test(
-            "User Registration",
-            "POST",
-            "api/auth/register",
-            200,
-            data={"name": name, "email": email, "password": password}
-        )
+        """Test basic health endpoint"""
+        print("\n=== HEALTH CHECK ===")
+        try:
+            response = self.session.get(f"{BASE_URL}/health")
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("status") == "healthy":
+                    self.log_test("Health Check", True, "API is healthy", data)
+                else:
+                    self.log_test("Health Check", False, f"Unexpected health status: {data}")
+            else:
+                self.log_test("Health Check", False, f"HTTP {response.status_code}: {response.text}")
+        except Exception as e:
+            self.log_test("Health Check", False, f"Exception: {str(e)}")
+    
+    def test_portal_registry(self):
+        """Test Portal Registry API (no auth needed)"""
+        print("\n=== PORTAL REGISTRY ===")
+        try:
+            response = self.session.get(f"{BASE_URL}/portals")
+            if response.status_code == 200:
+                data = response.json()
+                portals = data.get("portals", [])
+                if len(portals) == 6:
+                    portal_names = [p.get("name", "") for p in portals]
+                    expected_portals = ["Founders' Brain Portal", "Brain Injury Foundation Portal", 
+                                      "Insurance Portal", "Legal & Case Management", 
+                                      "Health & Science Portal", "Finance & Rewards Portal"]
+                    
+                    all_found = all(any(expected in name for name in portal_names) for expected in expected_portals)
+                    if all_found:
+                        self.log_test("Portal Registry", True, f"Found all 6 portals: {[p['name'] for p in portals]}")
+                    else:
+                        self.log_test("Portal Registry", False, f"Missing expected portals. Found: {portal_names}")
+                else:
+                    self.log_test("Portal Registry", False, f"Expected 6 portals, got {len(portals)}")
+            else:
+                self.log_test("Portal Registry", False, f"HTTP {response.status_code}: {response.text}")
+        except Exception as e:
+            self.log_test("Portal Registry", False, f"Exception: {str(e)}")
+    
+    def test_insurance_module(self):
+        """Test Insurance Module APIs (no auth needed)"""
+        print("\n=== INSURANCE MODULE ===")
         
-        if success and isinstance(response, dict):
-            if 'token' in response:
-                self.token = response['token']
-                self.session.headers['Authorization'] = f'Bearer {self.token}'
-            if 'user' in response and 'user_id' in response['user']:
-                self.user_id = response['user']['user_id']
-            
-        return success
-
-    def test_login(self, email, password):
-        """Test user login"""
-        success, response = self.run_test(
-            "User Login",
-            "POST",
-            "api/auth/login",
-            200,
-            data={"email": email, "password": password}
-        )
+        # Test insurance types
+        try:
+            response = self.session.get(f"{BASE_URL}/insurance/types")
+            if response.status_code == 200:
+                data = response.json()
+                types = data.get("insurance_types", [])
+                if len(types) == 4:
+                    type_ids = [t.get("type_id") for t in types]
+                    expected_types = ["health", "life", "vehicle", "house"]
+                    if all(t in type_ids for t in expected_types):
+                        self.log_test("Insurance Types", True, f"Found all 4 insurance types: {type_ids}")
+                    else:
+                        self.log_test("Insurance Types", False, f"Missing types. Expected: {expected_types}, Got: {type_ids}")
+                else:
+                    self.log_test("Insurance Types", False, f"Expected 4 types, got {len(types)}")
+            else:
+                self.log_test("Insurance Types", False, f"HTTP {response.status_code}: {response.text}")
+        except Exception as e:
+            self.log_test("Insurance Types", False, f"Exception: {str(e)}")
         
-        if success and isinstance(response, dict):
-            if 'token' in response:
-                self.token = response['token']
-                self.session.headers['Authorization'] = f'Bearer {self.token}'
-            if 'user' in response and 'user_id' in response['user']:
-                self.user_id = response['user']['user_id']
-                
-        return success
-
-    def test_get_me(self):
-        """Test getting current user info"""
-        if not self.token:
-            print("❌ No token available for auth test")
-            return False
-            
-        success, response = self.run_test(
-            "Get Current User",
-            "GET", 
-            "api/auth/me",
-            200
-        )
-        return success
-
-    def test_policies(self):
-        """Test policy endpoints"""
-        success1, response1 = self.run_test(
-            "Get All Policies",
-            "GET",
-            "api/policies",
-            200
-        )
+        # Test compliance endpoint
+        try:
+            response = self.session.get(f"{BASE_URL}/insurance/compliance")
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("jurisdiction") == "Alberta, Canada" and "compliance_requirements" in data:
+                    requirements = data.get("compliance_requirements", [])
+                    self.log_test("Insurance Compliance", True, f"Got compliance checklist with {len(requirements)} requirements")
+                else:
+                    self.log_test("Insurance Compliance", False, f"Missing expected compliance data: {data}")
+            else:
+                self.log_test("Insurance Compliance", False, f"HTTP {response.status_code}: {response.text}")
+        except Exception as e:
+            self.log_test("Insurance Compliance", False, f"Exception: {str(e)}")
+    
+    def test_governance_apis(self):
+        """Test DAO Governance APIs (auth needed for create/vote)"""
+        print("\n=== DAO GOVERNANCE ===")
         
-        success2 = True
-        if success1 and isinstance(response1, list) and len(response1) > 0:
-            first_policy_id = response1[0].get('policy_id')
-            if first_policy_id:
-                success2, response2 = self.run_test(
-                    "Get Specific Policy",
-                    "GET",
-                    f"api/policies/{first_policy_id}",
-                    200
-                )
+        # Test get proposals (no auth needed)
+        try:
+            response = self.session.get(f"{BASE_URL}/governance/proposals")
+            if response.status_code == 200:
+                data = response.json()
+                proposals = data.get("proposals", [])
+                self.log_test("Get Proposals", True, f"Retrieved {len(proposals)} proposals")
+            else:
+                self.log_test("Get Proposals", False, f"HTTP {response.status_code}: {response.text}")
+        except Exception as e:
+            self.log_test("Get Proposals", False, f"Exception: {str(e)}")
         
-        return success1 and success2
-
-    def test_create_claim(self):
-        """Test creating a new claim"""
-        if not self.token:
-            print("❌ No token available for claim test")
-            return False, None
-            
-        claim_data = {
-            "claim_number": f"WCB-TEST-{datetime.now().strftime('%Y%m%d%H%M%S')}",
-            "injury_type": "TBI",
-            "injury_group": "Group 1",
-            "injury_date": "2024-01-15",
-            "description": "Test TBI claim for automated testing",
-            "status": "active"
-        }
+        # Test governance stats
+        try:
+            response = self.session.get(f"{BASE_URL}/governance/stats")
+            if response.status_code == 200:
+                data = response.json()
+                if "total_proposals" in data and "treasury_balance" in data:
+                    self.log_test("Governance Stats", True, f"Stats: {data['total_proposals']} total, {data['treasury_balance']} treasury")
+                else:
+                    self.log_test("Governance Stats", False, f"Missing expected stats fields: {data}")
+            else:
+                self.log_test("Governance Stats", False, f"HTTP {response.status_code}: {response.text}")
+        except Exception as e:
+            self.log_test("Governance Stats", False, f"Exception: {str(e)}")
         
-        success, response = self.run_test(
-            "Create Claim",
-            "POST",
-            "api/claims",
-            200,
-            data=claim_data
-        )
-        
-        claim_id = None
-        if success and isinstance(response, dict) and 'claim_id' in response:
-            claim_id = response['claim_id']
-            
-        return success, claim_id
-
-    def test_get_claims(self):
-        """Test getting user's claims"""
-        if not self.token:
-            print("❌ No token available for claims test")
-            return False
-            
-        success, response = self.run_test(
-            "Get Claims",
-            "GET",
-            "api/claims", 
-            200
-        )
-        return success
-
-    def test_letter_generation(self, claim_id=None):
-        """Test letter generation"""
-        if not self.token:
-            print("❌ No token available for letter test")
-            return False
-            
-        letter_data = {
-            "template_type": "claim_file_request",
-            "claim_id": claim_id,
-            "custom_data": {}
-        }
-        
-        success, response = self.run_test(
-            "Generate Letter",
-            "POST",
-            "api/letters/generate",
-            200,
-            data=letter_data
-        )
-        return success
-
-    def test_ai_chat(self):
-        """Test AI chat functionality"""
-        if not self.token:
-            print("❌ No token available for AI chat test")
-            return False
-            
-        chat_data = {
-            "messages": [{"role": "user", "content": "What is a Group 1 TBI?"}],
-            "session_id": None
-        }
-        
-        success, response = self.run_test(
-            "AI Chat",
-            "POST", 
-            "api/chat",
-            200,
-            data=chat_data
-        )
-        return success
-
-    def test_otp_flow(self):
-        """Test OTP email flow (mocked)"""
-        test_email = f"test{datetime.now().strftime('%Y%m%d%H%M%S')}@example.com"
-        
-        success1, response1 = self.run_test(
-            "Send OTP",
-            "POST",
-            f"api/auth/otp/send?email={test_email}",
-            200,
-            data={}
-        )
-        
-        # Note: In real implementation, we'd need the actual OTP from server logs
-        # For testing purposes, we'll just test the send endpoint
-        return success1
-
-    def test_settings(self):
-        """Test user settings"""
-        if not self.token:
-            print("❌ No token available for settings test")
-            return False
-            
-        success1, response1 = self.run_test(
-            "Get Settings",
-            "GET",
-            "api/settings",
-            200
-        )
-        
-        success2 = True
-        if success1:
-            # Test updating settings using form data
-            import requests
-            url = f"{self.base_url}/api/settings"
-            form_data = {
-                'theme': 'dark',
-                'accent_color': 'green'
-            }
-            headers = {'Authorization': f'Bearer {self.token}'}
-            
+        # Test create proposal (auth required)
+        if self.auth_token:
             try:
-                response = requests.put(url, data=form_data, headers=headers)
-                success2 = response.status_code == 200
-                print(f"\n🔍 Testing Update Settings...")
-                if success2:
-                    print(f"✅ Passed - Status: {response.status_code}")
+                proposal_data = {
+                    "title": "Test Proposal for TBI Support",
+                    "description": "A test proposal to improve TBI survivor support services",
+                    "category": "policy",
+                    "voting_period_days": 7
+                }
+                response = self.session.post(f"{BASE_URL}/governance/proposals", json=proposal_data)
+                if response.status_code == 200:
+                    data = response.json()
+                    proposal_id = data.get("proposal_id")
+                    self.log_test("Create Proposal", True, f"Created proposal: {proposal_id}")
+                    
+                    # Test voting on the proposal
+                    if proposal_id:
+                        vote_data = {"vote": "for"}
+                        vote_response = self.session.post(f"{BASE_URL}/governance/proposals/{proposal_id}/vote", json=vote_data)
+                        if vote_response.status_code == 200:
+                            self.log_test("Vote on Proposal", True, "Successfully voted 'for' on proposal")
+                        else:
+                            self.log_test("Vote on Proposal", False, f"Vote failed: {vote_response.status_code} - {vote_response.text}")
                 else:
-                    print(f"❌ Failed - Status: {response.status_code}")
+                    self.log_test("Create Proposal", False, f"HTTP {response.status_code}: {response.text}")
             except Exception as e:
-                print(f"❌ Failed - Error: {str(e)}")
-                success2 = False
+                self.log_test("Create Proposal", False, f"Exception: {str(e)}")
+        else:
+            self.log_test("Create Proposal", False, "No auth token available")
+    
+    def test_legal_case_management(self):
+        """Test Legal Case Management APIs (auth needed)"""
+        print("\n=== LEGAL CASE MANAGEMENT ===")
         
-        return success1 and success2
-
-    def test_comprehensive_timeline(self, claim_id):
-        """Test comprehensive timeline endpoint"""
-        if not self.token or not claim_id:
-            print("❌ No token or claim_id available for timeline test")
-            return False
-            
-        success, response = self.run_test(
-            "Get Comprehensive Timeline",
-            "GET",
-            f"api/claims/{claim_id}/full-timeline",
-            200
-        )
+        if not self.auth_token:
+            self.log_test("Legal Case Management", False, "No auth token available")
+            return
         
-        # Validate response structure
-        if success and isinstance(response, dict):
-            required_keys = ['claim', 'timeline', 'stats']
-            missing_keys = [key for key in required_keys if key not in response]
-            if missing_keys:
-                print(f"⚠️ Missing timeline response keys: {missing_keys}")
-                return False
-            print(f"✅ Timeline response has {len(response.get('timeline', []))} events")
-            
-        return success
-
-    def test_pdf_generation(self, claim_id=None):
-        """Test PDF generation endpoint"""
-        if not self.token:
-            print("❌ No token available for PDF test")
-            return False
-            
-        # First create a letter to generate PDF from
-        letter_data = {
-            "template_type": "claim_file_request",
-            "claim_id": claim_id,  # Use the provided claim_id
-            "custom_data": {}
-        }
-        
-        success, response = self.run_test(
-            "Generate Letter for PDF",
-            "POST",
-            "api/letters/generate",
-            200,
-            data=letter_data
-        )
-        
-        if not success or not isinstance(response, dict) or 'letter_id' not in response:
-            print("❌ Failed to create letter for PDF test")
-            return False
-            
-        letter_id = response['letter_id']
-        
-        # Now test PDF generation
-        url = f"{self.base_url}/api/letters/{letter_id}/pdf"
-        headers = {'Authorization': f'Bearer {self.token}'}
-        
-        print(f"\n🔍 Testing PDF Generation...")
-        print(f"   URL: {url}")
-        
+        # Test create case
         try:
-            response = requests.post(url, headers=headers)
-            success = response.status_code == 200
-            
-            if success:
-                # Check if response is PDF
-                content_type = response.headers.get('content-type', '')
-                if 'application/pdf' in content_type:
-                    print(f"✅ Passed - PDF generated successfully (Size: {len(response.content)} bytes)")
-                    self.tests_passed += 1
+            case_data = {
+                "title": "WCB Appeal for TBI Claim",
+                "case_type": "wcb_appeal",
+                "description": "Appealing WCB decision on TBI classification and benefits",
+                "priority": "high"
+            }
+            response = self.session.post(f"{BASE_URL}/legal/cases", json=case_data)
+            if response.status_code == 200:
+                data = response.json()
+                case_id = data.get("case_id")
+                self.log_test("Create Legal Case", True, f"Created case: {case_id}")
+                
+                # Test get cases
+                cases_response = self.session.get(f"{BASE_URL}/legal/cases")
+                if cases_response.status_code == 200:
+                    cases_data = cases_response.json()
+                    cases = cases_data.get("cases", [])
+                    self.log_test("Get Legal Cases", True, f"Retrieved {len(cases)} cases")
                 else:
-                    print(f"❌ Failed - Wrong content type: {content_type}")
-                    success = False
+                    self.log_test("Get Legal Cases", False, f"HTTP {cases_response.status_code}: {cases_response.text}")
+                
+                # Test policy review request
+                if case_id:
+                    review_response = self.session.post(f"{BASE_URL}/legal/cases/{case_id}/review")
+                    if review_response.status_code == 200:
+                        self.log_test("Request Policy Review", True, "Successfully requested policy review with reversal capability")
+                    else:
+                        self.log_test("Request Policy Review", False, f"HTTP {review_response.status_code}: {review_response.text}")
             else:
-                print(f"❌ Failed - Status: {response.status_code}")
-                try:
-                    error = response.json()
-                    print(f"   Error: {error}")
-                except:
-                    print(f"   Response: {response.text[:200]}...")
-            
-            self.tests_run += 1
-            return success
-            
+                self.log_test("Create Legal Case", False, f"HTTP {response.status_code}: {response.text}")
         except Exception as e:
-            print(f"❌ Failed - Error: {str(e)}")
-            self.tests_run += 1
-            return False
-
-    def test_pinata_ipfs_upload(self, claim_id):
-        """Test Pinata IPFS evidence upload"""
-        if not self.token or not claim_id:
-            print("❌ No token or claim_id available for IPFS test")
-            return False
-            
-        # Create a small test file
-        import io
-        test_file_content = b"Test evidence file content for IPFS upload"
+            self.log_test("Legal Case Management", False, f"Exception: {str(e)}")
+    
+    def test_multi_ai_agents(self):
+        """Test Multi-AI Agent System APIs"""
+        print("\n=== MULTI-AI AGENT SYSTEM ===")
         
-        url = f"{self.base_url}/api/evidence/upload"
-        headers = {'Authorization': f'Bearer {self.token}'}
-        
-        files = {
-            'file': ('test_evidence.txt', io.BytesIO(test_file_content), 'text/plain')
-        }
-        
-        data = {
-            'claim_id': claim_id,
-            'description': 'Test evidence upload for IPFS',
-            'evidence_type': 'document'
-        }
-        
-        print(f"\n🔍 Testing Pinata IPFS Upload...")
-        print(f"   URL: {url}")
-        
+        # Test get agents (no auth needed)
         try:
-            response = requests.post(url, headers=headers, files=files, data=data)
-            success = response.status_code == 200
-            
-            if success:
-                result = response.json()
-                if 'ipfs_cid' in result:
-                    ipfs_cid = result['ipfs_cid']
-                    is_mocked = result.get('is_mocked', False)
-                    status = "MOCKED" if is_mocked else "REAL IPFS"
-                    print(f"✅ Passed - {status} upload successful (CID: {ipfs_cid[:20]}...)")
-                    self.tests_passed += 1
+            response = self.session.get(f"{BASE_URL}/agents")
+            if response.status_code == 200:
+                data = response.json()
+                agents = data.get("agents", [])
+                if len(agents) == 6:
+                    agent_names = [a.get("name", "") for a in agents]
+                    expected_agents = ["Fetch.ai", "Heurist.ai", "Gaianet.ai", "Baselight.ai", "Zo.computer", "Autonomys"]
+                    
+                    found_agents = []
+                    for expected in expected_agents:
+                        if any(expected in name for name in agent_names):
+                            found_agents.append(expected)
+                    
+                    if len(found_agents) == 6:
+                        self.log_test("Get AI Agents", True, f"Found all 6 agents: {found_agents}")
+                    else:
+                        self.log_test("Get AI Agents", False, f"Missing agents. Expected: {expected_agents}, Found: {found_agents}")
                 else:
-                    print(f"❌ Failed - No IPFS CID in response")
-                    success = False
+                    self.log_test("Get AI Agents", False, f"Expected 6 agents, got {len(agents)}")
             else:
-                print(f"❌ Failed - Status: {response.status_code}")
-                try:
-                    error = response.json()
-                    print(f"   Error: {error}")
-                except:
-                    print(f"   Response: {response.text[:200]}...")
-            
-            self.tests_run += 1
-            return success
-            
+                self.log_test("Get AI Agents", False, f"HTTP {response.status_code}: {response.text}")
         except Exception as e:
-            print(f"❌ Failed - Error: {str(e)}")
-            self.tests_run += 1
-            return False
-
-    def test_ai_draft_letter(self, claim_id=None):
-        """Test AI letter drafting endpoint"""
-        if not self.token:
-            print("❌ No token available for AI draft test")
-            return False
-            
-        url = f"{self.base_url}/api/letters/ai-draft"
-        headers = {'Authorization': f'Bearer {self.token}'}
+            self.log_test("Get AI Agents", False, f"Exception: {str(e)}")
         
-        form_data = {
-            'purpose': 'I need to request my complete claim file because I believe there are missing medical records from my recent specialist visits.',
-            'additional_context': 'I have been waiting for 3 weeks without response to my previous inquiry.'
-        }
+        # NOTE: Not testing POST /api/agents/query as per instructions (requires LLM calls)
+        print("ℹ️  Skipping POST /api/agents/query as instructed (requires LLM calls)")
+    
+    def test_existing_apis(self):
+        """Test existing APIs that should still work"""
+        print("\n=== EXISTING APIS ===")
         
-        if claim_id:
-            form_data['claim_id'] = claim_id
-        
-        print(f"\n🔍 Testing AI Draft Letter...")
-        print(f"   URL: {url}")
-        
+        # Test policies endpoint
         try:
-            response = requests.post(url, headers=headers, data=form_data)
-            success = response.status_code == 200
-            
-            if success:
-                result = response.json()
-                if 'content' in result and len(result['content']) > 100:
-                    print(f"✅ Passed - AI letter generated ({len(result['content'])} characters)")
-                    self.tests_passed += 1
+            response = self.session.get(f"{BASE_URL}/policies")
+            if response.status_code == 200:
+                data = response.json()
+                if isinstance(data, list) and len(data) > 0:
+                    self.log_test("WCB Policies", True, f"Retrieved {len(data)} WCB policies")
                 else:
-                    print(f"❌ Failed - Invalid AI response content")
-                    success = False
+                    self.log_test("WCB Policies", False, f"No policies returned: {data}")
             else:
-                print(f"❌ Failed - Status: {response.status_code}")
-                try:
-                    error = response.json()
-                    print(f"   Error: {error}")
-                except:
-                    print(f"   Response: {response.text[:200]}...")
-            
-            self.tests_run += 1
-            return success
-            
+                self.log_test("WCB Policies", False, f"HTTP {response.status_code}: {response.text}")
         except Exception as e:
-            print(f"❌ Failed - Error: {str(e)}")
-            self.tests_run += 1
-            return False
-
-    def test_wallet_auth_message(self):
-        """Test wallet authentication message endpoint"""
-        test_address = "0x742f35Cc6Cd4C442C3d5f7a8Cc5D7E3b5a0E5b2F"
+            self.log_test("WCB Policies", False, f"Exception: {str(e)}")
+    
+    def run_all_tests(self):
+        """Run all backend tests"""
+        print("🚀 Starting Tech X Brain Collective Backend API Tests")
+        print(f"Backend URL: {BASE_URL}")
         
-        success, response = self.run_test(
-            "Wallet Auth Message",
-            "GET",
-            f"api/auth/wallet/message?address={test_address}",
-            200
-        )
+        # Basic health check
+        self.test_health_check()
         
-        if success and isinstance(response, dict):
-            required_keys = ['message', 'nonce']
-            missing_keys = [key for key in required_keys if key not in response]
-            if missing_keys:
-                print(f"⚠️ Missing wallet message response keys: {missing_keys}")
-                return False
-            print(f"✅ Wallet message contains: message and nonce")
-            
-        return success
-
-    def test_wallet_auth_verify_endpoint(self):
-        """Test wallet verification endpoint exists (without valid signature)"""
-        # This will fail with invalid signature but confirms endpoint exists
-        test_data = {
-            "address": "0x742f35Cc6Cd4C442C3d5f7a8Cc5D7E3b5a0E5b2F",
-            "message": "Test message",
-            "signature": "0xinvalidsignature",
-            "nonce": "test_nonce"
-        }
+        # Authentication setup
+        auth_success = self.register_and_login()
         
-        success, response = self.run_test(
-            "Wallet Verify Endpoint (Expected 401)",
-            "POST",
-            "api/auth/wallet/verify",
-            401,  # Expecting failure due to invalid signature
-            data=test_data
-        )
+        # Test all modules
+        self.test_portal_registry()
+        self.test_insurance_module()
+        self.test_governance_apis()
+        self.test_legal_case_management()
+        self.test_multi_ai_agents()
+        self.test_existing_apis()
         
-        return success
-
-    def test_email_otp_endpoints(self):
-        """Test email OTP endpoints"""
-        test_email = f"otp_test_{datetime.now().strftime('%Y%m%d%H%M%S')}@example.com"
+        # Summary
+        self.print_summary()
+    
+    def print_summary(self):
+        """Print test summary"""
+        print("\n" + "="*60)
+        print("🏁 TEST SUMMARY")
+        print("="*60)
         
-        # Test send OTP
-        success1, response1 = self.run_test(
-            "Send Email OTP",
-            "POST",
-            f"api/auth/otp/send?email={test_email}",
-            200
-        )
+        passed = sum(1 for r in self.test_results if r["success"])
+        failed = len(self.test_results) - passed
         
-        if not success1:
-            return False
-            
-        # Test verify OTP (will fail with wrong code but confirms endpoint exists)
-        verify_data = {
-            "email": test_email,
-            "otp_code": "123456"  # Wrong code on purpose
-        }
+        print(f"Total Tests: {len(self.test_results)}")
+        print(f"✅ Passed: {passed}")
+        print(f"❌ Failed: {failed}")
+        print(f"Success Rate: {(passed/len(self.test_results)*100):.1f}%")
         
-        success2, response2 = self.run_test(
-            "Verify Email OTP (Expected 400)",
-            "POST", 
-            "api/auth/otp/verify",
-            400,  # Expecting failure due to wrong OTP
-            data=verify_data
-        )
+        if failed > 0:
+            print("\n🔍 FAILED TESTS:")
+            for result in self.test_results:
+                if not result["success"]:
+                    print(f"  ❌ {result['test']}: {result['details']}")
         
-        return success1 and success2
-
-def main():
-    # Setup
-    tester = WCBBackendTester()
-    timestamp = datetime.now().strftime('%H%M%S')
-    test_email = f"test_user_{timestamp}@example.com"
-    test_password = "TestPass123!"
-    test_name = f"Test User {timestamp}"
-
-    print("🚀 Starting WCB Backend API Tests")
-    print(f"Base URL: {tester.base_url}")
-    print("=" * 60)
-
-    # Health check first
-    if not tester.test_health_check():
-        print("❌ Health check failed, stopping tests")
-        return 1
-
-    # Test user registration
-    if not tester.test_register(test_name, test_email, test_password):
-        print("❌ Registration failed, stopping tests")
-        return 1
-
-    # Test auth endpoints
-    if not tester.test_get_me():
-        print("⚠️ Get me endpoint failed")
-
-    # Test policies (public endpoint)
-    if not tester.test_policies():
-        print("⚠️ Policies endpoint failed")
-
-    # Test claims
-    claim_success, claim_id = tester.test_create_claim()
-    if not claim_success:
-        print("⚠️ Create claim failed")
-    
-    if not tester.test_get_claims():
-        print("⚠️ Get claims failed")
-
-    # Test letter generation
-    if not tester.test_letter_generation(claim_id):
-        print("⚠️ Letter generation failed")
-
-    # Test AI chat
-    if not tester.test_ai_chat():
-        print("⚠️ AI chat failed")
-
-    # Test OTP flow  
-    if not tester.test_otp_flow():
-        print("⚠️ OTP flow failed")
-
-    # Test settings
-    if not tester.test_settings():
-        print("⚠️ Settings failed")
-
-    # === NEW FEATURES TESTING ===
-    print("\n🚀 Testing New Features:")
-    
-    # Test comprehensive timeline (requires claim_id)
-    if claim_id:
-        if not tester.test_comprehensive_timeline(claim_id):
-            print("⚠️ Comprehensive timeline failed")
-    
-    # Test PDF generation
-    if not tester.test_pdf_generation(claim_id):
-        print("⚠️ PDF generation failed")
-    
-    # Test Pinata IPFS upload (may fail with invalid key but should attempt)
-    if claim_id:
-        if not tester.test_pinata_ipfs_upload(claim_id):
-            print("⚠️ Pinata IPFS upload failed (expected if API key is invalid)")
-    
-    # Test AI draft letter
-    if not tester.test_ai_draft_letter(claim_id):
-        print("⚠️ AI draft letter failed")
-
-    # === NEW FRICTIONLESS AUTH TESTING ===
-    print("\n🔐 Testing New Frictionless Authentication Features:")
-    
-    # Test wallet authentication endpoints
-    if not tester.test_wallet_auth_message():
-        print("⚠️ Wallet auth message endpoint failed")
-    
-    if not tester.test_wallet_auth_verify_endpoint():
-        print("⚠️ Wallet verify endpoint failed")
-    
-    # Test email OTP endpoints
-    if not tester.test_email_otp_endpoints():
-        print("⚠️ Email OTP endpoints failed")
-
-    # Print final results
-    print("\n" + "=" * 60)
-    print(f"📊 Test Results: {tester.tests_passed}/{tester.tests_run} passed")
-    success_rate = (tester.tests_passed / tester.tests_run) * 100 if tester.tests_run > 0 else 0
-    print(f"📈 Success Rate: {success_rate:.1f}%")
-    
-    if success_rate >= 70:
-        print("✅ Backend is mostly functional")
-        return 0
-    else:
-        print("❌ Backend has significant issues")
-        return 1
+        print("\n📊 DETAILED RESULTS:")
+        for result in self.test_results:
+            status = "✅" if result["success"] else "❌"
+            print(f"  {status} {result['test']}")
+        
+        return failed == 0
 
 if __name__ == "__main__":
-    sys.exit(main())
+    tester = BackendTester()
+    success = tester.run_all_tests()
+    sys.exit(0 if success else 1)

@@ -149,7 +149,7 @@ export default function Login() {
               <Brain className="w-8 h-8 text-white" />
             </div>
             <div className="text-left">
-              <span className="text-2xl font-bold font-[Manrope] block">NeuroClaim</span>
+              <span className="text-2xl font-bold font-[Manrope] block text-gradient">Tech X Brain</span>
               <span className="text-sm text-muted-foreground">Support Portal</span>
             </div>
           </Link>

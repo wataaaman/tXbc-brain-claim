@@ -1,3 +1,4 @@
+import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -15,6 +16,16 @@ import EvidenceManager from './pages/EvidenceManager';
 import AIAssistant from './pages/AIAssistant';
 import Settings from './pages/Settings';
 import ClaimTimeline from './pages/ClaimTimeline';
+
+// New Portal Pages
+import DAOGovernance from './pages/DAOGovernance';
+import MultiAgents from './pages/MultiAgents';
+import FoundersPortal from './pages/FoundersPortal';
+import BrainInjuryPortal from './pages/BrainInjuryPortal';
+import InsurancePortal from './pages/InsurancePortal';
+import LegalPortal from './pages/LegalPortal';
+import HealthPortal from './pages/HealthPortal';
+import FinancePortal from './pages/FinancePortal';
 
 // Protected Route Component
 function ProtectedRoute({ children }) {
@@ -40,8 +51,6 @@ function ProtectedRoute({ children }) {
 function AppRouter() {
   const location = useLocation();
 
-  // CRITICAL: Check URL fragment for session_id synchronously during render
-  // This prevents race conditions by processing OAuth callback FIRST
   if (location.hash?.includes('session_id=')) {
     return <AuthCallback />;
   }
@@ -52,28 +61,26 @@ function AppRouter() {
       <Route path="/" element={<Landing />} />
       <Route path="/login" element={<Login />} />
       
-      {/* Protected routes */}
-      <Route path="/dashboard" element={
-        <ProtectedRoute><Dashboard /></ProtectedRoute>
-      } />
-      <Route path="/policies" element={
-        <ProtectedRoute><PolicyLibrary /></ProtectedRoute>
-      } />
-      <Route path="/documents" element={
-        <ProtectedRoute><DocumentGenerator /></ProtectedRoute>
-      } />
-      <Route path="/evidence" element={
-        <ProtectedRoute><EvidenceManager /></ProtectedRoute>
-      } />
-      <Route path="/assistant" element={
-        <ProtectedRoute><AIAssistant /></ProtectedRoute>
-      } />
-      <Route path="/settings" element={
-        <ProtectedRoute><Settings /></ProtectedRoute>
-      } />
-      <Route path="/timeline/:claimId" element={
-        <ProtectedRoute><ClaimTimeline /></ProtectedRoute>
-      } />
+      {/* Protected routes - Core */}
+      <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+      <Route path="/policies" element={<ProtectedRoute><PolicyLibrary /></ProtectedRoute>} />
+      <Route path="/documents" element={<ProtectedRoute><DocumentGenerator /></ProtectedRoute>} />
+      <Route path="/evidence" element={<ProtectedRoute><EvidenceManager /></ProtectedRoute>} />
+      <Route path="/assistant" element={<ProtectedRoute><AIAssistant /></ProtectedRoute>} />
+      <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+      <Route path="/timeline/:claimId" element={<ProtectedRoute><ClaimTimeline /></ProtectedRoute>} />
+      
+      {/* New - DAO & Agents */}
+      <Route path="/governance" element={<ProtectedRoute><DAOGovernance /></ProtectedRoute>} />
+      <Route path="/agents" element={<ProtectedRoute><MultiAgents /></ProtectedRoute>} />
+      
+      {/* New - Portals */}
+      <Route path="/portal/founders" element={<ProtectedRoute><FoundersPortal /></ProtectedRoute>} />
+      <Route path="/portal/brain-injury" element={<ProtectedRoute><BrainInjuryPortal /></ProtectedRoute>} />
+      <Route path="/portal/insurance" element={<ProtectedRoute><InsurancePortal /></ProtectedRoute>} />
+      <Route path="/portal/legal" element={<ProtectedRoute><LegalPortal /></ProtectedRoute>} />
+      <Route path="/portal/health" element={<ProtectedRoute><HealthPortal /></ProtectedRoute>} />
+      <Route path="/portal/finance" element={<ProtectedRoute><FinancePortal /></ProtectedRoute>} />
       
       {/* Fallback */}
       <Route path="*" element={<Navigate to="/" replace />} />
@@ -91,9 +98,7 @@ function App() {
             <Toaster 
               position="top-right" 
               richColors 
-              toastOptions={{
-                className: 'rounded-xl'
-              }}
+              toastOptions={{ className: 'rounded-xl' }}
             />
           </BrowserRouter>
         </AuthProvider>

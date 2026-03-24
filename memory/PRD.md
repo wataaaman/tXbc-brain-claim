@@ -1,15 +1,16 @@
-# NeuroClaim Support - Product Requirements Document
+# Tech X Brain Collective - Product Requirements Document
 
 ## Original Problem Statement
-Build an app for injured workers to support their needs related to Alberta Workers' Compensation Board (WCB) claims for traumatic brain injury (TBI). The app provides policy reference, document generation, claim tracking, AI assistance, and evidence management.
+Build a Web3 DApp for the Tech X Brain Collective & Brain Injury Foundation (Alberta Launch). A decentralized "Healing Hub" leveraging Web3 transparency, AI, and neurofeedback for TBI recovery. Core blockchain: Flare Network.
 
 ## Architecture
-- **Frontend**: React 19 with shadcn/ui components, Tailwind CSS
+- **Frontend**: React 19 with shadcn/ui components, Tailwind CSS (cyberpunk theme)
 - **Backend**: FastAPI (Python) with async MongoDB (motor)
 - **Database**: MongoDB
-- **AI**: OpenAI GPT-5.2 via Emergent LLM integration
-- **Storage**: IPFS via Pinata (REAL - working with provided key)
-- **Auth**: JWT + Google OAuth (Emergent Auth) + Email OTP + TOTP
+- **AI**: OpenAI GPT-5.2 via Emergent LLM integration (powering multi-agent system)
+- **Storage**: IPFS via Pinata
+- **Auth**: JWT + Google OAuth (Emergent Auth) + Email OTP + TOTP + Wallet Auth (MetaMask)
+- **Web3**: ethers.js, wagmi, viem, @reown/appkit
 
 ## User Personas
 1. **Injured Workers**: Primary users with TBI needing to navigate WCB claims

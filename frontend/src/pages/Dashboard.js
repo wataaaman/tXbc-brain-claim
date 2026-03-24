@@ -118,10 +118,10 @@ export default function Dashboard() {
         {/* Header */}
         <div className="mb-8">
           <h1 className="text-3xl md:text-4xl font-bold tracking-tight font-[Manrope] mb-2">
-            Your Claims Dashboard
+            <span className="text-gradient">Claims Dashboard</span>
           </h1>
           <p className="text-lg text-muted-foreground">
-            Manage your WCB claims and access resources
+            Tech X Brain Collective - Manage your WCB claims and access resources
           </p>
         </div>
 

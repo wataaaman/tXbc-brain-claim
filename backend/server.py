@@ -20,8 +20,13 @@ import asyncio
 import secrets
 
 # Eth imports for wallet auth
-from eth_account import Account
-from eth_account.messages import encode_defunct
+try:
+    from eth_account import Account
+    from eth_account.messages import encode_defunct
+    ETH_AVAILABLE = True
+except ImportError:
+    ETH_AVAILABLE = False
+    Account = None
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -458,6 +463,9 @@ This request will not trigger a blockchain transaction or cost any gas fees."""
 @api_router.post("/auth/wallet/verify")
 async def verify_wallet_signature(request: WalletVerifyRequest, response: Response):
     """Verify wallet signature and create session"""
+    if not ETH_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Wallet authentication temporarily unavailable")
+    
     address = request.address.lower()
     
     # Check nonce exists and not used

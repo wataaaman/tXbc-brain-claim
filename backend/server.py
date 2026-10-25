@@ -1,12 +1,18 @@
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Form, Response, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.cors import CORSMiddleware
+from starlette.responses import JSONResponse
 from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo.errors import DuplicateKeyError
 import os
 import logging
+import hashlib
+import re
+from html import escape
 from pathlib import Path
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr, field_validator
 from typing import List, Optional, Dict, Any
 import uuid
 from datetime import datetime, timezone, timedelta
@@ -36,10 +42,36 @@ mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-# JWT Config
-JWT_SECRET = os.environ.get('JWT_SECRET_KEY', 'neuroclaim-secret-key')
+# JWT Config. The previous built-in fallback is rejected by digest so the
+# plaintext default is not kept in source. Set JWT_SECRET_KEY in the environment.
+_BANNED_JWT_SECRET_SHA256 = "3720d88643dd8ade18c972c7319ed5642f9f2eb1f7fcfca388fe03a80cbb1675"
+JWT_SECRET = os.environ.get("JWT_SECRET_KEY", "")
+if (
+    len(JWT_SECRET.encode("utf-8")) < 32
+    or hashlib.sha256(JWT_SECRET.encode("utf-8")).hexdigest() == _BANNED_JWT_SECRET_SHA256
+):
+    raise RuntimeError("JWT_SECRET_KEY must be set to a unique value of at least 32 characters")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRY_HOURS = 168  # 7 days
+MAX_EVIDENCE_BYTES = 10 * 1024 * 1024
+MAX_OTP_ATTEMPTS = 5
+_ETH_ADDRESS = re.compile(r"^0x[0-9a-fA-F]{40}$")
+_PRIVATE_USER_FIELDS = {
+    "password",
+    "totp_secret",
+    "backup_codes",
+    "pending_totp_secret",
+    "pending_backup_codes",
+}
+_CSRF_EXEMPT_PATHS = {
+    "/api/auth/login",
+    "/api/auth/register",
+    "/api/auth/otp/send",
+    "/api/auth/otp/verify",
+    "/api/auth/wallet/verify",
+    "/api/auth/session",
+    "/api/auth/logout",
+}
 
 # Emergent LLM Key
 EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
@@ -68,8 +100,16 @@ class UserBase(BaseModel):
 
 class UserCreate(BaseModel):
     email: EmailStr
-    name: str
+    name: str = Field(min_length=1, max_length=200)
     password: str
+
+    @field_validator("password")
+    @classmethod
+    def password_length(cls, value: str) -> str:
+        size = len(value.encode("utf-8"))
+        if size < 8 or size > 72:
+            raise ValueError("Password must be 8 to 72 bytes")
+        return value
 
 class UserLogin(BaseModel):
     email: EmailStr
@@ -100,12 +140,19 @@ class TwoFAVerifyRequest(BaseModel):
     code: str
 
 class ClaimCreate(BaseModel):
-    claim_number: str
-    injury_type: str = "TBI"
-    injury_group: str  # "Group 1" or "Group 2"
-    injury_date: str
-    description: str
-    status: str = "active"
+    claim_number: str = Field(min_length=1, max_length=64)
+    injury_type: str = Field(default="TBI", max_length=64)
+    injury_group: str = Field(max_length=64)
+    injury_date: str = Field(max_length=40)
+    description: str = Field(max_length=8000)
+    status: str = Field(default="active", max_length=32)
+
+    @field_validator("status")
+    @classmethod
+    def known_status(cls, value: str) -> str:
+        if value not in {"active", "pending", "closed", "appealed"}:
+            raise ValueError("Invalid claim status")
+        return value
 
 class ClaimResponse(BaseModel):
     claim_id: str
@@ -142,12 +189,12 @@ class EvidenceFile(BaseModel):
     uploaded_at: datetime
 
 class ChatMessage(BaseModel):
-    role: str
-    content: str
+    role: str = Field(max_length=32)
+    content: str = Field(max_length=16000)
 
 class ChatRequest(BaseModel):
-    messages: List[ChatMessage]
-    session_id: Optional[str] = None
+    messages: List[ChatMessage] = Field(max_length=50)
+    session_id: Optional[str] = Field(default=None, max_length=80)
 
 class ChatResponse(BaseModel):
     response: str
@@ -179,8 +226,105 @@ class WCBPolicy(BaseModel):
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
-def verify_password(password: str, hashed: str) -> bool:
-    return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
+def verify_password(password: str, hashed: Optional[str]) -> bool:
+    if not isinstance(password, str) or not isinstance(hashed, str) or not password or not hashed:
+        return False
+    try:
+        password_bytes = password.encode("utf-8")
+        if len(password_bytes) > 72:
+            return False
+        return bcrypt.checkpw(password_bytes, hashed.encode("utf-8"))
+    except (ValueError, TypeError):
+        return False
+
+def https_url(value: Optional[str]) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip()
+    if len(candidate) > 500 or not candidate.startswith("https://"):
+        return None
+    if any(char.isspace() for char in candidate):
+        return None
+    return candidate
+
+def public_user(user: dict) -> dict:
+    safe = {key: value for key, value in user.items() if key not in _PRIVATE_USER_FIELDS}
+    if "picture" in safe:
+        safe["picture"] = https_url(safe.get("picture"))
+    return safe
+
+def set_session_cookie(response: Response, session_token: str) -> None:
+    response.set_cookie(
+        key="session_token",
+        value=session_token,
+        httponly=True,
+        secure=True,
+        samesite="none",
+        max_age=7 * 24 * 60 * 60,
+        path="/",
+    )
+
+def clear_session_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key="session_token",
+        path="/",
+        httponly=True,
+        secure=True,
+        samesite="none",
+    )
+
+def session_is_active(session: dict) -> bool:
+    expires_at = session.get("expires_at")
+    if isinstance(expires_at, str):
+        try:
+            expires_at = datetime.fromisoformat(expires_at)
+        except ValueError:
+            return False
+    if not isinstance(expires_at, datetime):
+        return False
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    return expires_at > datetime.now(timezone.utc)
+
+def constant_compare(left: str, right: str) -> bool:
+    if not isinstance(left, str) or not isinstance(right, str):
+        return False
+    try:
+        return secrets.compare_digest(left.encode("utf-8"), right.encode("utf-8"))
+    except (TypeError, UnicodeError):
+        return False
+
+def wallet_auth_message(address: str, nonce: str) -> str:
+    return (
+        "NeuroClaim Support wants you to sign in with your Ethereum account.\n"
+        "\n"
+        f"Wallet: {address}\n"
+        f"Nonce: {nonce}\n"
+        "\n"
+        "This request will not trigger a blockchain transaction or cost any gas fees."
+    )
+
+def safe_filename(name: Optional[str]) -> str:
+    base = Path(name or "upload").name.replace("\x00", "").strip()
+    if not base or base in {".", ".."}:
+        return "upload"
+    return base[:255]
+
+def letter_pdf_paragraphs(content: str) -> List[str]:
+    paragraphs = []
+    for para in content.split("\n\n"):
+        if para.strip():
+            paragraphs.append(escape(para).replace("\n", "<br/>"))
+    return paragraphs
+
+def allowed_cors_origins() -> List[str]:
+    raw = os.environ.get("CORS_ORIGINS", "")
+    origins = []
+    for part in raw.split(","):
+        origin = part.strip()
+        if origin and origin != "*":
+            origins.append(origin)
+    return origins
 
 def create_token(user_id: str, email: str) -> str:
     payload = {
@@ -204,16 +348,10 @@ async def get_current_user(request: Request, credentials: HTTPAuthorizationCrede
     session_token = request.cookies.get("session_token")
     if session_token:
         session = await db.user_sessions.find_one({"session_token": session_token}, {"_id": 0})
-        if session:
-            expires_at = session.get("expires_at")
-            if isinstance(expires_at, str):
-                expires_at = datetime.fromisoformat(expires_at)
-            if expires_at.tzinfo is None:
-                expires_at = expires_at.replace(tzinfo=timezone.utc)
-            if expires_at > datetime.now(timezone.utc):
-                user = await db.users.find_one({"user_id": session["user_id"]}, {"_id": 0})
-                if user:
-                    return user
+        if session and session_is_active(session):
+            user = await db.users.find_one({"user_id": session["user_id"]}, {"_id": 0})
+            if user:
+                return user
     
     # Then check Authorization header
     if credentials:
@@ -254,7 +392,10 @@ async def register(user_data: UserCreate):
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     
-    await db.users.insert_one(user_doc)
+    try:
+        await db.users.insert_one(user_doc)
+    except DuplicateKeyError:
+        raise HTTPException(status_code=400, detail="Email already registered")
     
     token = create_token(user_id, user_data.email)
     
@@ -276,7 +417,7 @@ async def login(credentials: UserLogin, response: Response):
     if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
-    if not verify_password(credentials.password, user["password"]):
+    if not verify_password(credentials.password, user.get("password")):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
     token = create_token(user["user_id"], user["email"])
@@ -290,15 +431,7 @@ async def login(credentials: UserLogin, response: Response):
         "created_at": datetime.now(timezone.utc).isoformat()
     })
     
-    response.set_cookie(
-        key="session_token",
-        value=session_token,
-        httponly=True,
-        secure=True,
-        samesite="none",
-        max_age=7*24*60*60,
-        path="/"
-    )
+    set_session_cookie(response, session_token)
     
     created_at = user.get("created_at")
     if isinstance(created_at, str):
@@ -310,7 +443,7 @@ async def login(credentials: UserLogin, response: Response):
             user_id=user["user_id"],
             email=user["email"],
             name=user["name"],
-            picture=user.get("picture"),
+            picture=https_url(user.get("picture")),
             has_2fa=user.get("has_2fa", False),
             created_at=created_at
         )
@@ -336,25 +469,30 @@ async def process_session(request: Request, response: Response):
         raise HTTPException(status_code=401, detail="Invalid session")
     
     auth_data = auth_response.json()
+    email = auth_data.get("email")
+    name = auth_data.get("name")
+    if not email or not name:
+        raise HTTPException(status_code=401, detail="Invalid session")
+    picture = https_url(auth_data.get("picture"))
     
     # Check if user exists
-    existing_user = await db.users.find_one({"email": auth_data["email"]}, {"_id": 0})
+    existing_user = await db.users.find_one({"email": email}, {"_id": 0})
     
     if existing_user:
         user_id = existing_user["user_id"]
         # Update user data
         await db.users.update_one(
             {"user_id": user_id},
-            {"$set": {"name": auth_data["name"], "picture": auth_data.get("picture")}}
+            {"$set": {"name": name, "picture": picture}}
         )
     else:
         # Create new user
         user_id = f"user_{uuid.uuid4().hex[:12]}"
         user_doc = {
             "user_id": user_id,
-            "email": auth_data["email"],
-            "name": auth_data["name"],
-            "picture": auth_data.get("picture"),
+            "email": email,
+            "name": name,
+            "picture": picture,
             "password": None,
             "has_2fa": False,
             "totp_secret": None,
@@ -363,8 +501,8 @@ async def process_session(request: Request, response: Response):
         }
         await db.users.insert_one(user_doc)
     
-    # Create session
-    session_token = auth_data.get("session_token", f"session_{uuid.uuid4().hex}")
+    # Create our own session. Do not reuse a token chosen by the identity provider.
+    session_token = f"session_{uuid.uuid4().hex}"
     await db.user_sessions.delete_many({"user_id": user_id})
     await db.user_sessions.insert_one({
         "user_id": user_id,
@@ -373,25 +511,17 @@ async def process_session(request: Request, response: Response):
         "created_at": datetime.now(timezone.utc).isoformat()
     })
     
-    response.set_cookie(
-        key="session_token",
-        value=session_token,
-        httponly=True,
-        secure=True,
-        samesite="none",
-        max_age=7*24*60*60,
-        path="/"
-    )
+    set_session_cookie(response, session_token)
     
-    token = create_token(user_id, auth_data["email"])
+    token = create_token(user_id, email)
     
     return {
         "token": token,
         "user": {
             "user_id": user_id,
-            "email": auth_data["email"],
-            "name": auth_data["name"],
-            "picture": auth_data.get("picture")
+            "email": email,
+            "name": name,
+            "picture": picture
         }
     }
 
@@ -405,7 +535,7 @@ async def get_me(user: dict = Depends(get_current_user)):
         user_id=user["user_id"],
         email=user["email"],
         name=user["name"],
-        picture=user.get("picture"),
+        picture=https_url(user.get("picture")),
         has_2fa=user.get("has_2fa", False),
         created_at=created_at
     )
@@ -416,7 +546,7 @@ async def logout(request: Request, response: Response):
     if session_token:
         await db.user_sessions.delete_one({"session_token": session_token})
     
-    response.delete_cookie(key="session_token", path="/")
+    clear_session_cookie(response)
     return {"message": "Logged out successfully"}
 
 # ============== WALLET AUTH ROUTES ==============
@@ -434,8 +564,7 @@ class WalletVerifyRequest(BaseModel):
 @api_router.get("/auth/wallet/message")
 async def get_wallet_auth_message(address: str):
     """Generate authentication message for wallet signing"""
-    # Basic validation
-    if not address.startswith("0x") or len(address) != 42:
+    if not _ETH_ADDRESS.fullmatch(address):
         raise HTTPException(status_code=400, detail="Invalid wallet address format")
     
     # Generate unique nonce
@@ -450,44 +579,44 @@ async def get_wallet_auth_message(address: str):
         "used": False
     })
     
-    # Create message
-    message = f"""NeuroClaim Support wants you to sign in with your Ethereum account.
-
-Wallet: {address}
-Nonce: {nonce}
-
-This request will not trigger a blockchain transaction or cost any gas fees."""
-    
-    return WalletAuthMessageResponse(message=message, nonce=nonce)
+    return WalletAuthMessageResponse(message=wallet_auth_message(address, nonce), nonce=nonce)
 
 @api_router.post("/auth/wallet/verify")
 async def verify_wallet_signature(request: WalletVerifyRequest, response: Response):
     """Verify wallet signature and create session"""
+    if not _ETH_ADDRESS.fullmatch(request.address):
+        raise HTTPException(status_code=400, detail="Invalid wallet address format")
+
+    address = request.address.lower()
+    expected_message = wallet_auth_message(request.address, request.nonce)
+    if not constant_compare(expected_message, request.message):
+        raise HTTPException(status_code=401, detail="Message does not match issued challenge")
+
     if not ETH_AVAILABLE:
         raise HTTPException(status_code=503, detail="Wallet authentication temporarily unavailable")
     
-    address = request.address.lower()
-    
-    # Check nonce exists and not used
-    nonce_doc = await db.wallet_nonces.find_one({
-        "address": address,
-        "nonce": request.nonce,
-        "used": False
-    }, {"_id": 0})
+    # Consume the nonce before signature verification so it cannot be replayed.
+    nonce_doc = await db.wallet_nonces.find_one_and_update(
+        {"address": address, "nonce": request.nonce, "used": False},
+        {"$set": {"used": True}},
+    )
     
     if not nonce_doc:
         raise HTTPException(status_code=401, detail="Invalid or expired nonce")
     
-    # Check expiration
-    expires_at = datetime.fromisoformat(nonce_doc["expires_at"])
+    expires_at = nonce_doc.get("expires_at")
+    if isinstance(expires_at, str):
+        expires_at = datetime.fromisoformat(expires_at)
+    if not isinstance(expires_at, datetime):
+        raise HTTPException(status_code=401, detail="Nonce expired")
     if expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
     if expires_at < datetime.now(timezone.utc):
         raise HTTPException(status_code=401, detail="Nonce expired")
     
-    # Verify signature
+    # Verify signature against the server-issued challenge, not a client-chosen message.
     try:
-        message_hash = encode_defunct(text=request.message)
+        message_hash = encode_defunct(text=expected_message)
         recovered_address = Account.recover_message(message_hash, signature=request.signature)
         
         if recovered_address.lower() != address:
@@ -495,12 +624,6 @@ async def verify_wallet_signature(request: WalletVerifyRequest, response: Respon
     except Exception as e:
         logger.error(f"Wallet signature verification error: {e}")
         raise HTTPException(status_code=401, detail="Invalid signature")
-    
-    # Mark nonce as used
-    await db.wallet_nonces.update_one(
-        {"address": address, "nonce": request.nonce},
-        {"$set": {"used": True}}
-    )
     
     # Get or create user
     user = await db.users.find_one({"wallet_address": address}, {"_id": 0})
@@ -537,15 +660,7 @@ async def verify_wallet_signature(request: WalletVerifyRequest, response: Respon
         "created_at": datetime.now(timezone.utc).isoformat()
     })
     
-    response.set_cookie(
-        key="session_token",
-        value=session_token,
-        httponly=True,
-        secure=True,
-        samesite="none",
-        max_age=7*24*60*60,
-        path="/"
-    )
+    set_session_cookie(response, session_token)
     
     token = create_token(user_id, user["email"])
     
@@ -556,7 +671,7 @@ async def verify_wallet_signature(request: WalletVerifyRequest, response: Respon
             "email": user["email"],
             "name": user["name"],
             "wallet_address": address,
-            "picture": user.get("picture")
+            "picture": https_url(user.get("picture"))
         }
     }
 
@@ -619,7 +734,7 @@ async def verify_2fa(data: TwoFAVerifyRequest, user: dict = Depends(get_current_
 async def disable_2fa(data: TwoFAVerifyRequest, user: dict = Depends(get_current_user)):
     user_doc = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0})
     
-    if not user_doc.get("has_2fa"):
+    if not user_doc.get("has_2fa") or not user_doc.get("totp_secret"):
         raise HTTPException(status_code=400, detail="2FA not enabled")
     
     totp = pyotp.TOTP(user_doc["totp_secret"])
@@ -638,12 +753,13 @@ async def disable_2fa(data: TwoFAVerifyRequest, user: dict = Depends(get_current
 @api_router.post("/auth/otp/send")
 async def send_otp(email: EmailStr):
     """Send OTP to email (MOCKED - logs OTP instead of sending email)"""
-    otp = str(uuid.uuid4().int)[:6]
+    otp = f"{secrets.randbelow(1_000_000):06d}"
     
     await db.email_otps.delete_many({"email": email})
     await db.email_otps.insert_one({
         "email": email,
-        "otp": otp,
+        "otp_hash": hash_password(otp),
+        "attempts": 0,
         "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
         "created_at": datetime.now(timezone.utc).isoformat()
     })
@@ -659,19 +775,37 @@ async def verify_otp(data: OTPVerifyRequest, response: Response):
     
     if not otp_doc:
         raise HTTPException(status_code=400, detail="No OTP found for this email")
+
+    if otp_doc.get("attempts", 0) >= MAX_OTP_ATTEMPTS:
+        await db.email_otps.delete_many({"email": data.email})
+        raise HTTPException(status_code=400, detail="Too many attempts")
     
-    expires_at = datetime.fromisoformat(otp_doc["expires_at"])
+    expires_at = otp_doc.get("expires_at")
+    if isinstance(expires_at, str):
+        expires_at = datetime.fromisoformat(expires_at)
+    if not isinstance(expires_at, datetime):
+        raise HTTPException(status_code=400, detail="OTP expired")
     if expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
     
     if expires_at < datetime.now(timezone.utc):
+        await db.email_otps.delete_many({"email": data.email})
         raise HTTPException(status_code=400, detail="OTP expired")
-    
-    if otp_doc["otp"] != data.otp_code:
+
+    stored_hash = otp_doc.get("otp_hash")
+    stored_plain = otp_doc.get("otp")
+    if stored_hash:
+        otp_ok = verify_password(data.otp_code, stored_hash)
+    elif isinstance(stored_plain, str):
+        otp_ok = constant_compare(stored_plain, data.otp_code)
+    else:
+        otp_ok = False
+    if not otp_ok:
+        await db.email_otps.update_one({"email": data.email}, {"$inc": {"attempts": 1}})
         raise HTTPException(status_code=400, detail="Invalid OTP")
     
     # Delete used OTP
-    await db.email_otps.delete_one({"email": data.email})
+    await db.email_otps.delete_many({"email": data.email})
     
     # Check if user exists, create if not
     user = await db.users.find_one({"email": data.email}, {"_id": 0})
@@ -698,19 +832,11 @@ async def verify_otp(data: OTPVerifyRequest, response: Response):
         "created_at": datetime.now(timezone.utc).isoformat()
     })
     
-    response.set_cookie(
-        key="session_token",
-        value=session_token,
-        httponly=True,
-        secure=True,
-        samesite="none",
-        max_age=7*24*60*60,
-        path="/"
-    )
+    set_session_cookie(response, session_token)
     
     token = create_token(user["user_id"], user["email"])
     
-    return {"token": token, "user": user}
+    return {"token": token, "user": public_user(user)}
 
 # ============== CLAIM ROUTES ==============
 
@@ -818,8 +944,14 @@ async def add_timeline_event(
     if not claim:
         raise HTTPException(status_code=404, detail="Claim not found")
     
+    if len(title) > 200 or len(description) > 8000 or len(event_type) > 64:
+        raise HTTPException(status_code=400, detail="Invalid timeline event")
+
     event_id = f"event_{uuid.uuid4().hex[:12]}"
-    event_date = datetime.fromisoformat(date)
+    try:
+        event_date = datetime.fromisoformat(date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format")
     
     event_doc = {
         "event_id": event_id,
@@ -851,7 +983,9 @@ async def get_timeline(claim_id: str, user: dict = Depends(get_current_user)):
     if not claim:
         raise HTTPException(status_code=404, detail="Claim not found")
     
-    events = await db.timeline_events.find({"claim_id": claim_id}, {"_id": 0}).sort("date", -1).to_list(500)
+    events = await db.timeline_events.find(
+        {"claim_id": claim_id, "user_id": user["user_id"]}, {"_id": 0}
+    ).sort("date", -1).to_list(500)
     
     result = []
     for e in events:
@@ -913,7 +1047,7 @@ async def upload_to_pinata(file_content: bytes, filename: str, metadata: dict) -
     except Exception as e:
         logger.error(f"Pinata upload error: {e}")
         fake_cid = f"Qm{uuid.uuid4().hex[:44]}"
-        return {"cid": fake_cid, "is_mocked": True, "error": str(e)}
+        return {"cid": fake_cid, "is_mocked": True}
 
 # ============== EVIDENCE ROUTES ==============
 
@@ -932,15 +1066,31 @@ async def upload_evidence(
     if not claim:
         raise HTTPException(status_code=404, detail="Claim not found")
     
-    file_content = await file.read()
-    file_size = len(file_content)
+    if len(description) > 8000 or len(evidence_type) > 64:
+        raise HTTPException(status_code=400, detail="Invalid evidence metadata")
+
+    file_name = safe_filename(file.filename)
+    chunks = []
+    file_size = 0
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        file_size += len(chunk)
+        if file_size > MAX_EVIDENCE_BYTES:
+            raise HTTPException(status_code=413, detail="File exceeds 10 MB limit")
+        chunks.append(chunk)
+    file_content = b"".join(chunks)
+    file_type = file.content_type or "application/octet-stream"
+    if len(file_type) > 200:
+        file_type = "application/octet-stream"
     
     evidence_id = f"evidence_{uuid.uuid4().hex[:12]}"
     
     # Upload to Pinata IPFS
     pinata_result = await upload_to_pinata(
         file_content=file_content,
-        filename=file.filename,
+        filename=file_name,
         metadata={
             "claim_id": claim_id,
             "evidence_type": evidence_type,
@@ -955,8 +1105,8 @@ async def upload_evidence(
         "evidence_id": evidence_id,
         "claim_id": claim_id,
         "user_id": user["user_id"],
-        "file_name": file.filename,
-        "file_type": file.content_type,
+        "file_name": file_name,
+        "file_type": file_type,
         "file_size": file_size,
         "ipfs_cid": ipfs_cid,
         "storage_url": f"https://{PINATA_GATEWAY}/ipfs/{ipfs_cid}",
@@ -975,8 +1125,8 @@ async def upload_evidence(
         evidence_id=evidence_id,
         claim_id=claim_id,
         user_id=user["user_id"],
-        file_name=file.filename,
-        file_type=file.content_type,
+        file_name=file_name,
+        file_type=file_type,
         file_size=file_size,
         ipfs_cid=ipfs_cid,
         storage_url=f"https://{PINATA_GATEWAY}/ipfs/{ipfs_cid}",
@@ -992,7 +1142,9 @@ async def get_evidence(claim_id: str, user: dict = Depends(get_current_user)):
     if not claim:
         raise HTTPException(status_code=404, detail="Claim not found")
     
-    evidence_list = await db.evidence.find({"claim_id": claim_id}, {"_id": 0}).to_list(500)
+    evidence_list = await db.evidence.find(
+        {"claim_id": claim_id, "user_id": user["user_id"]}, {"_id": 0}
+    ).to_list(500)
     
     result = []
     for e in evidence_list:
@@ -1073,7 +1225,7 @@ async def chat_with_ai(request: ChatRequest, user: dict = Depends(get_current_us
         
     except Exception as e:
         logger.error(f"AI chat error: {e}")
-        raise HTTPException(status_code=500, detail=f"AI service error: {str(e)}")
+        raise HTTPException(status_code=500, detail="AI service error")
 
 # ============== LETTER GENERATION ROUTES ==============
 
@@ -1171,17 +1323,22 @@ async def generate_letter(request: LetterGenerateRequest, user: dict = Depends(g
     
     template = LETTER_TEMPLATES[request.template_type]
     
-    # Get claim data if provided
+    if request.custom_data and len(json.dumps(request.custom_data)) > 20000:
+        raise HTTPException(status_code=400, detail="custom_data is too large")
+
+    # Get claim data if provided. A claim id the caller does not own is rejected
+    # so letters cannot be attached to someone else's timeline.
     claim_data = {}
     if request.claim_id:
         claim = await db.claims.find_one({"claim_id": request.claim_id, "user_id": user["user_id"]}, {"_id": 0})
-        if claim:
-            claim_data = {
-                "claim_number": claim["claim_number"],
-                "injury_type": claim["injury_type"],
-                "injury_group": claim["injury_group"],
-                "injury_date": claim["injury_date"]
-            }
+        if not claim:
+            raise HTTPException(status_code=404, detail="Claim not found")
+        claim_data = {
+            "claim_number": claim["claim_number"],
+            "injury_type": claim["injury_type"],
+            "injury_group": claim["injury_group"],
+            "injury_date": claim["injury_date"]
+        }
     
     # Merge with custom data
     format_data = {
@@ -1229,11 +1386,15 @@ async def ai_draft_letter(
     if not EMERGENT_LLM_KEY:
         raise HTTPException(status_code=500, detail="AI service not configured")
     
+    if len(purpose) > 4000 or (additional_context and len(additional_context) > 8000):
+        raise HTTPException(status_code=400, detail="Letter request is too large")
+
     claim_info = ""
     if claim_id:
         claim = await db.claims.find_one({"claim_id": claim_id, "user_id": user["user_id"]}, {"_id": 0})
-        if claim:
-            claim_info = f"""
+        if not claim:
+            raise HTTPException(status_code=404, detail="Claim not found")
+        claim_info = f"""
 Claim Details:
 - Claim Number: {claim['claim_number']}
 - Injury Type: {claim['injury_type']}
@@ -1295,7 +1456,7 @@ Generate only the letter content, formatted properly."""
         
     except Exception as e:
         logger.error(f"AI letter generation error: {e}")
-        raise HTTPException(status_code=500, detail=f"AI service error: {str(e)}")
+        raise HTTPException(status_code=500, detail="AI service error")
 
 @api_router.get("/letters", response_model=List[LetterResponse])
 async def get_letters(user: dict = Depends(get_current_user)):
@@ -1363,15 +1524,10 @@ async def generate_letter_pdf(letter_id: str, user: dict = Depends(get_current_u
     story.append(Paragraph("NeuroClaim Support - WCB Letter", title_style))
     story.append(Spacer(1, 0.25*inch))
     
-    # Split content into paragraphs
+    # Split content into paragraphs. Escape before ReportLab XML parsing.
     content = letter_doc.get("content", "")
-    paragraphs = content.split('\n\n')
-    
-    for para in paragraphs:
-        if para.strip():
-            # Handle line breaks within paragraphs
-            clean_para = para.replace('\n', '<br/>')
-            story.append(Paragraph(clean_para, body_style))
+    for clean_para in letter_pdf_paragraphs(content):
+        story.append(Paragraph(clean_para, body_style))
     
     # Build PDF
     doc.build(story)
@@ -1385,7 +1541,7 @@ async def generate_letter_pdf(letter_id: str, user: dict = Depends(get_current_u
         content=pdf_bytes,
         media_type="application/pdf",
         headers={
-            "Content-Disposition": f'attachment; filename="wcb-letter-{letter_id}.pdf"'
+            "Content-Disposition": f'attachment; filename="wcb-letter-{re.sub(r"[^A-Za-z0-9_-]", "", letter_id)[:64] or "letter"}.pdf"'
         }
     )
 
@@ -1435,7 +1591,9 @@ async def get_full_claim_timeline(claim_id: str, user: dict = Depends(get_curren
             pass
     
     # Add timeline events
-    events = await db.timeline_events.find({"claim_id": claim_id}, {"_id": 0}).to_list(500)
+    events = await db.timeline_events.find(
+        {"claim_id": claim_id, "user_id": user["user_id"]}, {"_id": 0}
+    ).to_list(500)
     for event in events:
         event_date = event.get("date")
         if isinstance(event_date, str):
@@ -1452,7 +1610,9 @@ async def get_full_claim_timeline(claim_id: str, user: dict = Depends(get_curren
         })
     
     # Add letters
-    letters = await db.letters.find({"claim_id": claim_id}, {"_id": 0}).to_list(500)
+    letters = await db.letters.find(
+        {"claim_id": claim_id, "user_id": user["user_id"]}, {"_id": 0}
+    ).to_list(500)
     for letter in letters:
         generated_at = letter.get("generated_at")
         if isinstance(generated_at, str):
@@ -1471,7 +1631,9 @@ async def get_full_claim_timeline(claim_id: str, user: dict = Depends(get_curren
         })
     
     # Add evidence uploads
-    evidence_list = await db.evidence.find({"claim_id": claim_id}, {"_id": 0}).to_list(500)
+    evidence_list = await db.evidence.find(
+        {"claim_id": claim_id, "user_id": user["user_id"]}, {"_id": 0}
+    ).to_list(500)
     for evidence in evidence_list:
         uploaded_at = evidence.get("uploaded_at")
         if isinstance(uploaded_at, str):
@@ -1821,6 +1983,13 @@ async def update_settings(
     text_size: Optional[str] = Form(None),
     user: dict = Depends(get_current_user)
 ):
+    if theme is not None and theme not in {"light", "dark"}:
+        raise HTTPException(status_code=400, detail="Invalid theme")
+    if accent_color is not None and accent_color not in {"blue", "green", "orange"}:
+        raise HTTPException(status_code=400, detail="Invalid accent color")
+    if text_size is not None and text_size not in {"small", "normal", "large"}:
+        raise HTTPException(status_code=400, detail="Invalid text size")
+
     update_data = {"user_id": user["user_id"]}
     
     if theme:
@@ -1907,10 +2076,10 @@ async def get_portals():
 # ============== DAO GOVERNANCE ==============
 
 class ProposalCreate(BaseModel):
-    title: str
-    description: str
-    category: str  # "policy", "funding", "technical", "community"
-    voting_period_days: int = 7
+    title: str = Field(min_length=1, max_length=200)
+    description: str = Field(min_length=1, max_length=20000)
+    category: str = Field(min_length=1, max_length=40)
+    voting_period_days: int = Field(default=7, ge=1, le=365)
 
 class VoteRequest(BaseModel):
     vote: str  # "for", "against", "abstain"
@@ -2003,14 +2172,20 @@ async def vote_on_proposal(proposal_id: str, data: VoteRequest, user: dict = Dep
     if vote_field not in ["votes_for", "votes_against", "votes_abstain"]:
         raise HTTPException(status_code=400, detail="Invalid vote type")
     
-    await db.governance_proposals.update_one(
-        {"proposal_id": proposal_id},
+    result = await db.governance_proposals.update_one(
+        {
+            "proposal_id": proposal_id,
+            "status": "active",
+            "voters": {"$ne": user["user_id"]},
+        },
         {
             "$inc": {vote_field: 1},
             "$push": {"voters": user["user_id"]},
             "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}
         }
     )
+    if result.modified_count != 1:
+        raise HTTPException(status_code=400, detail="Vote was not recorded")
     
     return {"message": "Vote recorded successfully", "vote": data.vote}
 
@@ -2091,9 +2266,9 @@ AI_AGENTS = [
 ]
 
 class AgentQueryRequest(BaseModel):
-    query: str
-    agent_ids: List[str]  # List of agent IDs to query
-    context: Optional[str] = None
+    query: str = Field(min_length=1, max_length=8000)
+    agent_ids: List[str] = Field(min_length=1, max_length=6)
+    context: Optional[str] = Field(default=None, max_length=8000)
 
 @api_router.get("/agents")
 async def get_agents():
@@ -2156,7 +2331,7 @@ Respond as this specific agent persona with relevant expertise."""
                 "agent_id": agent["agent_id"],
                 "agent_name": agent["name"],
                 "provider": agent["provider"],
-                "response": f"Agent temporarily unavailable: {str(e)}",
+                "response": "Agent temporarily unavailable",
                 "status": "error",
                 "timestamp": datetime.now(timezone.utc).isoformat()
             })
@@ -2254,10 +2429,10 @@ async def get_insurance_compliance():
 # ============== LEGAL & CASE MANAGEMENT ==============
 
 class LegalCaseCreate(BaseModel):
-    title: str
-    case_type: str  # "wcb_appeal", "insurance_dispute", "policy_review", "advocacy"
-    description: str
-    priority: str = "medium"
+    title: str = Field(min_length=1, max_length=200)
+    case_type: str = Field(min_length=1, max_length=40)
+    description: str = Field(min_length=1, max_length=20000)
+    priority: str = Field(default="medium", max_length=20)
 
 @api_router.post("/legal/cases")
 async def create_legal_case(data: LegalCaseCreate, user: dict = Depends(get_current_user)):
@@ -2343,14 +2518,46 @@ async def health_check():
 # Include the router
 app.include_router(api_router)
 
-# CORS
+class CrossSiteCookieMiddleware(BaseHTTPMiddleware):
+    """Reject cookie-only unsafe requests that browsers mark as cross-site.
+
+    SameSite=None session cookies are sent on cross-site form posts. Browsers
+    set Sec-Fetch-Site and script cannot override it. Requests that also
+    present a bearer token are not treated as CSRF.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.url.path not in _CSRF_EXEMPT_PATHS:
+            fetch_site = request.headers.get("sec-fetch-site", "")
+            has_cookie = bool(request.cookies.get("session_token"))
+            has_bearer = request.headers.get("authorization", "").lower().startswith("bearer ")
+            if fetch_site == "cross-site" and has_cookie and not has_bearer:
+                return JSONResponse(status_code=403, content={"detail": "Cross-site request blocked"})
+        return await call_next(request)
+
+_cors_origins = allowed_cors_origins()
+if not _cors_origins:
+    logger.error(
+        "CORS_ORIGINS is unset or wildcard. Credentialed cross-origin browser access is disabled. "
+        "Set CORS_ORIGINS to an explicit comma-separated origin list."
+    )
+
+# CORS middleware is added last so it runs first and can attach headers to CSRF responses.
+app.add_middleware(CrossSiteCookieMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_origins=_cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.on_event("startup")
+async def ensure_indexes():
+    try:
+        await db.users.create_index("email", unique=True)
+    except Exception as exc:
+        logger.error("Could not create unique email index: %s", exc)
 
 @app.on_event("shutdown")
 async def shutdown_db_client():

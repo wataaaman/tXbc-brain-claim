@@ -10,6 +10,7 @@ import os
 import logging
 import hashlib
 import re
+import time
 from html import escape
 from pathlib import Path
 from pydantic import BaseModel, Field, EmailStr, field_validator
@@ -55,6 +56,15 @@ JWT_ALGORITHM = "HS256"
 JWT_EXPIRY_HOURS = 168  # 7 days
 MAX_EVIDENCE_BYTES = 10 * 1024 * 1024
 MAX_OTP_ATTEMPTS = 5
+# In-process limits. They apply to this worker only.
+REGISTER_IP_LIMIT, REGISTER_IP_WINDOW = 5, 60 * 60
+REGISTER_ACCOUNT_LIMIT, REGISTER_ACCOUNT_WINDOW = 3, 60 * 60
+LOGIN_IP_LIMIT, LOGIN_IP_WINDOW = 20, 15 * 60
+LOGIN_ACCOUNT_LIMIT, LOGIN_ACCOUNT_WINDOW = 10, 15 * 60
+OTP_SEND_IP_LIMIT, OTP_SEND_WINDOW = 5, 10 * 60
+OTP_SEND_ACCOUNT_LIMIT = 3
+OTP_VERIFY_IP_LIMIT, OTP_VERIFY_WINDOW = 20, 10 * 60
+OTP_VERIFY_ACCOUNT_LIMIT = 10
 _ETH_ADDRESS = re.compile(r"^0x[0-9a-fA-F]{40}$")
 _PRIVATE_USER_FIELDS = {
     "password",
@@ -368,10 +378,64 @@ def generate_otp_secret() -> str:
 def generate_backup_codes(count: int = 8) -> List[str]:
     return [str(uuid.uuid4())[:8].upper() for _ in range(count)]
 
+class RateLimiter:
+    """Sliding window of timestamps kept in memory for this process."""
+
+    def __init__(self) -> None:
+        self._events: Dict[str, List[float]] = {}
+
+    def reset(self) -> None:
+        self._events.clear()
+
+    def allow(self, key: str, limit: int, window_seconds: int) -> bool:
+        now = time.monotonic()
+        cutoff = now - window_seconds
+        recent = [stamp for stamp in self._events.get(key, ()) if stamp > cutoff]
+        if len(recent) >= limit:
+            self._events[key] = recent
+            return False
+        recent.append(now)
+        self._events[key] = recent
+        return True
+
+auth_rate_limiter = RateLimiter()
+
+def client_ip(request: Request) -> str:
+    if request.client and request.client.host:
+        return request.client.host
+    return "unknown"
+
+def enforce_auth_rate_limit(
+    request: Request,
+    scope: str,
+    account: str,
+    ip_limit: int,
+    ip_window: int,
+    account_limit: int,
+    account_window: int,
+) -> None:
+    ip_key = f"{scope}:ip:{client_ip(request)}"
+    account_key = f"{scope}:account:{account.lower()}"
+    if not auth_rate_limiter.allow(ip_key, ip_limit, ip_window) or not auth_rate_limiter.allow(account_key, account_limit, account_window):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many requests",
+            headers={"Retry-After": str(max(ip_window, account_window))},
+        )
+
 # ============== AUTH ROUTES ==============
 
 @api_router.post("/auth/register", response_model=TokenResponse)
-async def register(user_data: UserCreate):
+async def register(user_data: UserCreate, request: Request):
+    enforce_auth_rate_limit(
+        request,
+        scope="register",
+        account=user_data.email,
+        ip_limit=REGISTER_IP_LIMIT,
+        ip_window=REGISTER_IP_WINDOW,
+        account_limit=REGISTER_ACCOUNT_LIMIT,
+        account_window=REGISTER_ACCOUNT_WINDOW,
+    )
     # Check if user exists
     existing = await db.users.find_one({"email": user_data.email}, {"_id": 0})
     if existing:
@@ -412,7 +476,16 @@ async def register(user_data: UserCreate):
     )
 
 @api_router.post("/auth/login", response_model=TokenResponse)
-async def login(credentials: UserLogin, response: Response):
+async def login(credentials: UserLogin, request: Request, response: Response):
+    enforce_auth_rate_limit(
+        request,
+        scope="login",
+        account=credentials.email,
+        ip_limit=LOGIN_IP_LIMIT,
+        ip_window=LOGIN_IP_WINDOW,
+        account_limit=LOGIN_ACCOUNT_LIMIT,
+        account_window=LOGIN_ACCOUNT_WINDOW,
+    )
     user = await db.users.find_one({"email": credentials.email}, {"_id": 0})
     if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -751,8 +824,17 @@ async def disable_2fa(data: TwoFAVerifyRequest, user: dict = Depends(get_current
 # ============== EMAIL OTP ROUTES ==============
 
 @api_router.post("/auth/otp/send")
-async def send_otp(email: EmailStr):
+async def send_otp(email: EmailStr, request: Request):
     """Send OTP to email (MOCKED - logs OTP instead of sending email)"""
+    enforce_auth_rate_limit(
+        request,
+        scope="otp-send",
+        account=email,
+        ip_limit=OTP_SEND_IP_LIMIT,
+        ip_window=OTP_SEND_WINDOW,
+        account_limit=OTP_SEND_ACCOUNT_LIMIT,
+        account_window=OTP_SEND_WINDOW,
+    )
     otp = f"{secrets.randbelow(1_000_000):06d}"
     
     await db.email_otps.delete_many({"email": email})
@@ -770,7 +852,16 @@ async def send_otp(email: EmailStr):
     return {"message": "OTP sent to email", "note": "MOCKED - check server logs for OTP"}
 
 @api_router.post("/auth/otp/verify")
-async def verify_otp(data: OTPVerifyRequest, response: Response):
+async def verify_otp(data: OTPVerifyRequest, request: Request, response: Response):
+    enforce_auth_rate_limit(
+        request,
+        scope="otp-verify",
+        account=data.email,
+        ip_limit=OTP_VERIFY_IP_LIMIT,
+        ip_window=OTP_VERIFY_WINDOW,
+        account_limit=OTP_VERIFY_ACCOUNT_LIMIT,
+        account_window=OTP_VERIFY_WINDOW,
+    )
     otp_doc = await db.email_otps.find_one({"email": data.email}, {"_id": 0})
     
     if not otp_doc:

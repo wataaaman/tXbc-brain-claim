@@ -152,6 +152,7 @@ class FakeDB:
 @pytest.fixture
 def client():
     server.db = FakeDB()
+    server.auth_rate_limiter.reset()
     with TestClient(server.app) as test_client:
         yield test_client
 
@@ -467,6 +468,75 @@ def test_safe_filename_strips_paths():
     assert server.safe_filename("../../etc/passwd") == "passwd"
     assert server.safe_filename(None) == "upload"
     assert server.safe_filename("..") == "upload"
+
+
+def test_framework_versions_cover_multipart_cves():
+    import fastapi
+    import starlette
+    from packaging.version import Version
+
+    assert Version(fastapi.__version__) >= Version("0.128.8")
+    assert Version(starlette.__version__) >= Version("0.52.1")
+
+
+def test_rate_limiter_expires_old_hits(monkeypatch):
+    limiter = server.RateLimiter()
+    clock = {"now": 1_000.0}
+    monkeypatch.setattr(server.time, "monotonic", lambda: clock["now"])
+    assert limiter.allow("login:ip:test", 2, 10)
+    assert limiter.allow("login:ip:test", 2, 10)
+    assert limiter.allow("login:ip:test", 2, 10) is False
+    clock["now"] = 1_011.0
+    assert limiter.allow("login:ip:test", 2, 10) is True
+
+
+def test_register_and_login_are_rate_limited(client, monkeypatch):
+    monkeypatch.setattr(server, "REGISTER_ACCOUNT_LIMIT", 1)
+    first = register(client, email="limited@example.com")
+    assert first["user"]["email"] == "limited@example.com"
+    again = client.post(
+        "/api/auth/register",
+        json={"email": "limited@example.com", "name": "Again", "password": "test123456"},
+    )
+    assert again.status_code == 429
+    assert again.headers.get("retry-after")
+
+    monkeypatch.setattr(server, "LOGIN_IP_LIMIT", 2)
+    for index in range(2):
+        failed = client.post(
+            "/api/auth/login",
+            json={"email": f"missing{index}@example.com", "password": "test123456"},
+        )
+        assert failed.status_code == 401
+    blocked = client.post(
+        "/api/auth/login",
+        json={"email": "missing2@example.com", "password": "test123456"},
+    )
+    assert blocked.status_code == 429
+
+
+def test_otp_send_and_verify_are_rate_limited(client, monkeypatch):
+    monkeypatch.setattr(server, "OTP_SEND_ACCOUNT_LIMIT", 2)
+    monkeypatch.setattr(server, "OTP_SEND_IP_LIMIT", 100)
+    for _ in range(2):
+        sent = client.post("/api/auth/otp/send", params={"email": "otp-limit@example.com"})
+        assert sent.status_code == 200, sent.text
+    blocked_send = client.post("/api/auth/otp/send", params={"email": "otp-limit@example.com"})
+    assert blocked_send.status_code == 429
+
+    monkeypatch.setattr(server, "OTP_VERIFY_ACCOUNT_LIMIT", 2)
+    monkeypatch.setattr(server, "OTP_VERIFY_IP_LIMIT", 100)
+    for _ in range(2):
+        failed = client.post(
+            "/api/auth/otp/verify",
+            json={"email": "verify-limit@example.com", "otp_code": "000000"},
+        )
+        assert failed.status_code == 400
+    blocked_verify = client.post(
+        "/api/auth/otp/verify",
+        json={"email": "verify-limit@example.com", "otp_code": "000000"},
+    )
+    assert blocked_verify.status_code == 429
 
 
 def test_letter_markup_is_escaped_before_pdf():
